@@ -1,4 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
+import type { JSONObject, JSONValue } from '@tanstack/ai-mcp/events'
 import {
   getMcpEventsSession,
   mcpEventsClient,
@@ -12,8 +13,39 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value as Record<string, unknown>
 }
 
-function asObjectData(value: unknown): Record<string, unknown> {
-  return asRecord(value) ?? {}
+function asJsonValue(value: unknown): JSONValue | undefined {
+  if (
+    value === null ||
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean'
+  ) {
+    return value
+  }
+  if (Array.isArray(value)) {
+    const items: Array<JSONValue> = []
+    for (const item of value) {
+      const json = asJsonValue(item)
+      if (json === undefined) return undefined
+      items.push(json)
+    }
+    return items
+  }
+  if (typeof value === 'object') {
+    return asJsonObject(value)
+  }
+  return undefined
+}
+
+function asJsonObject(value: unknown): JSONObject {
+  const record = asRecord(value)
+  if (record === undefined) return {}
+  const out: JSONObject = {}
+  for (const [key, item] of Object.entries(record)) {
+    const json = asJsonValue(item)
+    if (json !== undefined) out[key] = json
+  }
+  return out
 }
 
 function loopbackOrigin(url: string): string {
@@ -61,7 +93,7 @@ export const Route = createFileRoute('/api/mcp-events-control')({
           return Response.json(sub)
         }
         if (op === 'emit') {
-          const data = asObjectData(body.data)
+          const data = asJsonObject(body.data)
           const result = await session.events.emit('incident.created', data, {
             cursor: typeof body.cursor === 'string' ? body.cursor : undefined,
           })
