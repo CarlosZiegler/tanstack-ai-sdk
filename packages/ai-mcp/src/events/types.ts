@@ -331,7 +331,9 @@ export interface SubscribeMCPEventOptions {
  * @experimental
  */
 export interface MCPEvents {
-  list: (options?: { signal?: AbortSignal }) => Promise<Array<MCPEventDefinition>>
+  list: (options?: {
+    signal?: AbortSignal
+  }) => Promise<Array<MCPEventDefinition>>
   subscribe: (
     options: SubscribeMCPEventOptions,
   ) => Promise<MCPEventSubscribeResult>
@@ -347,7 +349,9 @@ export interface MCPEvents {
  * @experimental
  */
 export interface ManagedMCPEvents extends MCPEventOperations {
-  list: (options?: { signal?: AbortSignal }) => Promise<Array<MCPEventDefinition>>
+  list: (options?: {
+    signal?: AbortSignal
+  }) => Promise<Array<MCPEventDefinition>>
 }
 
 /** Minimal Standard Schema used for MCP `events/*` results. */
@@ -451,7 +455,10 @@ export class MCPEventWebhookError extends Error {
     message: string,
     options?: { subscriptionKey?: string; cause?: unknown },
   ) {
-    super(message, options?.cause === undefined ? undefined : { cause: options.cause })
+    super(
+      message,
+      options?.cause === undefined ? undefined : { cause: options.cause },
+    )
     this.name = 'MCPEventWebhookError'
     this.stage = stage
     this.subscriptionKey = options?.subscriptionKey

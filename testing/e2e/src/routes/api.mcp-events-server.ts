@@ -7,7 +7,10 @@ import {
 async function handle(request: Request): Promise<Response> {
   const sessionId = sessionIdFromRequest(request)
   if (sessionId === undefined) {
-    return Response.json({ error: 'session query is required' }, { status: 400 })
+    return Response.json(
+      { error: 'session query is required' },
+      { status: 400 },
+    )
   }
   return getMcpEventsSession(sessionId).mcpFetch(request)
 }

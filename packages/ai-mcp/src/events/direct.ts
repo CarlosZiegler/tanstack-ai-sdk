@@ -5,10 +5,7 @@ import {
   MCPEventsUnsupportedError,
   MCPUnknownEventError,
 } from '../errors'
-import {
-  validateCallbackUrl,
-  withCallbackKey,
-} from './callback-url'
+import { validateCallbackUrl, withCallbackKey } from './callback-url'
 import { isMethodNotFound, toMCPEventRequestError } from './errors-map'
 import { listEventDefinitions } from './list'
 import { createMCPEventSecret, decodeMCPEventSecret } from './secret'
@@ -40,14 +37,18 @@ function assertWebhookMode(mode: string) {
 function assertTtlMs(value: number | null | undefined) {
   if (value === undefined || value === null) return
   if (!isSafeInteger(value) || value <= 0) {
-    throw new MCPEventConfigError('ttlMs must be a positive safe integer or null')
+    throw new MCPEventConfigError(
+      'ttlMs must be a positive safe integer or null',
+    )
   }
 }
 
 function assertMaxAgeMs(value: number | undefined) {
   if (value === undefined) return
   if (!isSafeInteger(value) || value < 0) {
-    throw new MCPEventConfigError('maxAgeMs must be a non-negative safe integer')
+    throw new MCPEventConfigError(
+      'maxAgeMs must be a non-negative safe integer',
+    )
   }
 }
 
@@ -234,7 +235,10 @@ export function createDirectMCPEvents(
         )
       } catch (err) {
         const mapped = toMCPEventRequestError(err)
-        if (mapped instanceof MCPEventRequestError && mapped.kind === 'not-found') {
+        if (
+          mapped instanceof MCPEventRequestError &&
+          mapped.kind === 'not-found'
+        ) {
           await store.delete(record.key)
           return
         }

@@ -216,9 +216,13 @@ export function createMCPEventWebhook(
     if (Math.abs(nowSec - timestamp) > tolerance) {
       report(
         options.onError,
-        new MCPEventWebhookError('timestamp', 'Webhook timestamp is outside the tolerance window', {
-          subscriptionKey: key,
-        }),
+        new MCPEventWebhookError(
+          'timestamp',
+          'Webhook timestamp is outside the tolerance window',
+          {
+            subscriptionKey: key,
+          },
+        ),
       )
       return empty(401)
     }
@@ -259,19 +263,27 @@ export function createMCPEventWebhook(
     } catch (cause) {
       report(
         options.onError,
-        new MCPEventWebhookError('signature', 'Webhook signature verification failed', {
-          subscriptionKey: key,
-          cause,
-        }),
+        new MCPEventWebhookError(
+          'signature',
+          'Webhook signature verification failed',
+          {
+            subscriptionKey: key,
+            cause,
+          },
+        ),
       )
       return empty(401)
     }
     if (!verified) {
       report(
         options.onError,
-        new MCPEventWebhookError('signature', 'Webhook signature verification failed', {
-          subscriptionKey: key,
-        }),
+        new MCPEventWebhookError(
+          'signature',
+          'Webhook signature verification failed',
+          {
+            subscriptionKey: key,
+          },
+        ),
       )
       return empty(401)
     }
@@ -328,10 +340,14 @@ export function createMCPEventWebhook(
       } catch (cause) {
         report(
           options.onError,
-          new MCPEventWebhookError('store', 'Failed to delete terminated subscription', {
-            subscriptionKey: key,
-            cause,
-          }),
+          new MCPEventWebhookError(
+            'store',
+            'Failed to delete terminated subscription',
+            {
+              subscriptionKey: key,
+              cause,
+            },
+          ),
         )
         return empty(503)
       }
@@ -378,12 +394,19 @@ export function createMCPEventWebhook(
     if (isExpired(record, nowMs)) {
       return empty(410)
     }
-    if (classified.event.name !== record.name || classified.event.eventId !== webhookId) {
+    if (
+      classified.event.name !== record.name ||
+      classified.event.eventId !== webhookId
+    ) {
       report(
         options.onError,
-        new MCPEventWebhookError('envelope', 'Event does not match the subscription', {
-          subscriptionKey: key,
-        }),
+        new MCPEventWebhookError(
+          'envelope',
+          'Event does not match the subscription',
+          {
+            subscriptionKey: key,
+          },
+        ),
       )
       return empty(400)
     }

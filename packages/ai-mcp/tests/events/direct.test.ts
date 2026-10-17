@@ -537,10 +537,9 @@ describe('createDirectMCPEvents', () => {
   })
 
   it('throws MCPEventsUnsupportedError when supportsEvents is false', async () => {
-    const api = createDirectMCPEvents(
-      fakeCtx({ supportsEvents: false }),
-      { store: inMemoryMCPEventStore() },
-    )
+    const api = createDirectMCPEvents(fakeCtx({ supportsEvents: false }), {
+      store: inMemoryMCPEventStore(),
+    })
     await expect(api.list()).rejects.toBeInstanceOf(MCPEventsUnsupportedError)
   })
 

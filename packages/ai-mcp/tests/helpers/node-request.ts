@@ -4,7 +4,8 @@ export async function readRawBody(req: IncomingMessage): Promise<Uint8Array> {
   const chunks: Array<Uint8Array> = []
   let total = 0
   for await (const chunk of req) {
-    const bytes = typeof chunk === 'string' ? new TextEncoder().encode(chunk) : chunk
+    const bytes =
+      typeof chunk === 'string' ? new TextEncoder().encode(chunk) : chunk
     total += bytes.byteLength
     chunks.push(bytes)
   }
@@ -37,9 +38,7 @@ export function toWebRequest(
     method,
     headers,
     body:
-      method === 'GET' || method === 'HEAD'
-        ? undefined
-        : (rawBody as BodyInit),
+      method === 'GET' || method === 'HEAD' ? undefined : (rawBody as BodyInit),
   })
 }
 

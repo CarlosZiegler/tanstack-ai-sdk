@@ -19,9 +19,7 @@ function isDeliveryMode(value: unknown): value is MCPEventDeliveryMode {
   return typeof value === 'string' && DELIVERY_MODES.has(value)
 }
 
-function parseEventDefinition(
-  value: unknown,
-): MCPEventDefinition | undefined {
+function parseEventDefinition(value: unknown): MCPEventDefinition | undefined {
   if (!isRecord(value)) return undefined
   if (!isNonEmptyString(value.name)) return undefined
   if (!Array.isArray(value.delivery) || value.delivery.length === 0) {
@@ -98,7 +96,10 @@ export const subscribeResult: MCPStandardSchema<SubscribeEventsResult> = {
       if (typeof value.truncated !== 'boolean') {
         return issues('events/subscribe result must include truncated')
       }
-      if (value.refreshBefore !== null && typeof value.refreshBefore !== 'string') {
+      if (
+        value.refreshBefore !== null &&
+        typeof value.refreshBefore !== 'string'
+      ) {
         return issues('refreshBefore must be an ISO timestamp or null')
       }
       if (
@@ -148,7 +149,8 @@ function parseEventOccurrence(value: unknown): MCPEventOccurrence | undefined {
     data,
   }
   if (value.cursor === undefined) return event
-  if (value.cursor !== null && typeof value.cursor !== 'string') return undefined
+  if (value.cursor !== null && typeof value.cursor !== 'string')
+    return undefined
   event.cursor = value.cursor
   return event
 }
@@ -169,7 +171,8 @@ export type ClassifiedWebhookBody =
  * @experimental
  */
 export function classifyWebhookBody(json: unknown): ClassifiedWebhookBody {
-  if (!isRecord(json)) return { kind: 'invalid', issue: 'body must be an object' }
+  if (!isRecord(json))
+    return { kind: 'invalid', issue: 'body must be an object' }
   if (typeof json.type === 'string') {
     if (json.type === 'verification') {
       if (!isNonEmptyString(json.challenge)) {
@@ -188,7 +191,10 @@ export function classifyWebhookBody(json: unknown): ClassifiedWebhookBody {
         return { kind: 'invalid', issue: 'terminated requires error' }
       }
       if (typeof json.error.code !== 'number') {
-        return { kind: 'invalid', issue: 'terminated error.code must be a number' }
+        return {
+          kind: 'invalid',
+          issue: 'terminated error.code must be a number',
+        }
       }
       if (typeof json.error.message !== 'string') {
         return {

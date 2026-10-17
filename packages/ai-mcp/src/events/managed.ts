@@ -42,7 +42,9 @@ export function validateMCPEventOperations(value: unknown): MCPEventOperations {
     throw new MCPEventConfigError('adapter operations missing subscribe')
   }
   if (typeof listSubscriptions !== 'function') {
-    throw new MCPEventConfigError('adapter operations missing listSubscriptions')
+    throw new MCPEventConfigError(
+      'adapter operations missing listSubscriptions',
+    )
   }
   if (typeof unsubscribe !== 'function') {
     throw new MCPEventConfigError('adapter operations missing unsubscribe')

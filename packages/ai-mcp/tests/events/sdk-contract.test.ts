@@ -166,7 +166,10 @@ describe('MCP SDK contract for Events', () => {
     )
     await client.connect(clientTransport)
     try {
-      await client.request({ method: 'events/list', params: {} }, listResultSchema)
+      await client.request(
+        { method: 'events/list', params: {} },
+        listResultSchema,
+      )
       const captured = events.capturedClientCapabilities.at(-1) as
         | { extensions?: Record<string, unknown> }
         | undefined

@@ -271,7 +271,8 @@ describe('createMCPEventWebhook', () => {
   it('returns 401 when the body was re-serialized by middleware', async () => {
     const record = sampleRecord()
     const { webhook, errors } = await setup(record)
-    const original = '{"eventId":"evt_1","name":"incident.created","timestamp":"2026-10-17T00:00:00Z","data":{},"cursor":"c1"}'
+    const original =
+      '{"eventId":"evt_1","name":"incident.created","timestamp":"2026-10-17T00:00:00Z","data":{},"cursor":"c1"}'
     const signed = await signedRequest({
       record,
       body: JSON.parse(original),
@@ -601,11 +602,13 @@ describe('createMCPEventWebhook', () => {
 
   it('never includes the secret in onError payloads or in response bodies', async () => {
     const secret = createMCPEventSecret()
-    const record = sampleRecord({ delivery: {
-      mode: 'webhook',
-      url: 'https://hooks.example.test/mcp?mcp_event_subscription=key-1',
-      secret,
-    } })
+    const record = sampleRecord({
+      delivery: {
+        mode: 'webhook',
+        url: 'https://hooks.example.test/mcp?mcp_event_subscription=key-1',
+        secret,
+      },
+    })
     const errors: Array<unknown> = []
     const bodies: Array<string> = []
     const store = inMemoryMCPEventStore()

@@ -48,7 +48,11 @@ export function inMemoryMCPEventStore(): MCPEventStore {
     async update(key, patch) {
       const stored = byKey.get(key)
       if (stored === undefined) return
-      if (patch.id !== undefined && stored.id !== undefined && patch.id !== stored.id) {
+      if (
+        patch.id !== undefined &&
+        stored.id !== undefined &&
+        patch.id !== stored.id
+      ) {
         byId.delete(stored.id)
       }
       Object.assign(stored, patch)

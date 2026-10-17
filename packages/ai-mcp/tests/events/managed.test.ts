@@ -9,9 +9,7 @@ import type {
   ManagedMCPSubscription,
 } from '../../src/events/types'
 
-function ops(
-  extra: Partial<MCPEventOperations> = {},
-): MCPEventOperations {
+function ops(extra: Partial<MCPEventOperations> = {}): MCPEventOperations {
   const record: ManagedMCPSubscription = {
     id: 'managed_1',
     name: 'incident.created',

@@ -209,9 +209,9 @@ describe('MCP Events HTTP e2e', () => {
     received.length = 0
     await client.experimental_events.unsubscribe({ key: sub.key })
     expect(await store.get(sub.key)).toBeUndefined()
-    expect(
-      events.subscriptions().some((item) => item.id === sub.id),
-    ).toBe(false)
+    expect(events.subscriptions().some((item) => item.id === sub.id)).toBe(
+      false,
+    )
     await events.emit(
       'incident.created',
       { id: 'after-unsub' },

@@ -14,9 +14,10 @@ async function control(
 ) {
   const res = await request.post('/api/mcp-events-control', { data })
   const body = await res.text()
-  expect(res.ok(), `control ${String(data.op)} failed (${res.status()}): ${body}`).toBe(
-    true,
-  )
+  expect(
+    res.ok(),
+    `control ${String(data.op)} failed (${res.status()}): ${body}`,
+  ).toBe(true)
   return JSON.parse(body) as Record<string, unknown>
 }
 
