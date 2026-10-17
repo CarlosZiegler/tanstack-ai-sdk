@@ -543,7 +543,7 @@
           "label": "MCP Server Tools",
           "to": "tools/mcp",
           "addedAt": "2026-06-05",
-          "updatedAt": "2026-10-12"
+          "updatedAt": "2026-10-17"
         },
         {
           "label": "Managed MCP with chat()",
@@ -567,6 +567,12 @@
           "to": "tools/mcp-input",
           "addedAt": "2026-09-22",
           "updatedAt": "2026-10-13"
+        },
+        {
+          "label": "MCP Events",
+          "to": "tools/mcp-events",
+          "addedAt": "2026-10-17",
+          "updatedAt": "2026-10-17"
         },
         {
           "label": "MCP Apps",
