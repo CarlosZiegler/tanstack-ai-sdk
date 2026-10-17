@@ -9,10 +9,7 @@ import {
 } from '@modelcontextprotocol/server'
 import { signMCPEventPayload } from '../../src/events/signature'
 import { decodeMCPEventSecret } from '../../src/events/secret'
-import type {
-  JSONObject,
-  MCPEventDefinition,
-} from '../../src/events/types'
+import type { JSONObject, MCPEventDefinition } from '../../src/events/types'
 import { passThroughSchema } from './pass-through-schema'
 
 const EVENTS_EXTENSION = 'io.modelcontextprotocol/events'
@@ -33,6 +30,12 @@ export interface TestEventsServerOptions {
   allowHttpLoopback?: boolean
   pageSize?: number
   maxAttempts?: number
+  /**
+   * Wire capability keys. SDK ServerCapabilitiesSchema strips top-level
+   * `events`, so that key is injected on HTTP discover/initialize JSON.
+   * Defaults: extensions and events both on (ChatGPT + SEP).
+   */
+  advertise?: { extensions?: boolean; events?: boolean }
   errorOn?: Partial<
     Record<
       'events/subscribe' | 'events/unsubscribe',
@@ -78,7 +81,9 @@ function subscriptionId(
 function isLoopbackHttp(url: URL): boolean {
   return (
     url.protocol === 'http:' &&
-    (url.hostname === '127.0.0.1' || url.hostname === '[::1]' || url.hostname === '::1')
+    (url.hostname === '127.0.0.1' ||
+      url.hostname === '[::1]' ||
+      url.hostname === '::1')
   )
 }
 
@@ -122,9 +127,12 @@ export function createTestEventsServer(options: TestEventsServerOptions = {}) {
   const maxAttempts = options.maxAttempts ?? 3
   const pageSize = options.pageSize
   const allowHttpLoopback = options.allowHttpLoopback === true
+  const advertiseExtensions = options.advertise?.extensions !== false
+  const advertiseEvents = options.advertise?.events !== false
   const capturedClientCapabilities: Array<unknown> = []
   const requests: Array<{ method: string; params: unknown }> = []
   const subscriptions = new Map<string, StoredSub>()
+  const verifiedCallbacks = new Set<string>()
 
   async function postSigned(
     sub: StoredSub,
@@ -173,6 +181,8 @@ export function createTestEventsServer(options: TestEventsServerOptions = {}) {
 
   async function verifyCallback(sub: StoredSub) {
     if (verify !== 'challenge') return
+    const cacheKey = `${principal}\n${sub.url}`
+    if (verifiedCallbacks.has(cacheKey)) return
     const challenge = crypto.randomUUID()
     const raw = new TextEncoder().encode(
       JSON.stringify({ type: 'verification', challenge }),
@@ -221,6 +231,7 @@ export function createTestEventsServer(options: TestEventsServerOptions = {}) {
         reason: 'challenge_failed',
       })
     }
+    verifiedCallbacks.add(cacheKey)
   }
 
   function attachEvents(server: Server) {
@@ -284,10 +295,8 @@ export function createTestEventsServer(options: TestEventsServerOptions = {}) {
         let ttlMs: number | null = ttlDefault
         if (body.ttlMs === null) ttlMs = null
         else if (typeof body.ttlMs === 'number') {
-          if (ttlMin !== undefined && body.ttlMs < ttlMin) {
-            throw new ProtocolError(-32602, 'ttlMs is below the minimum')
-          }
-          ttlMs = body.ttlMs
+          ttlMs =
+            ttlMin !== undefined && body.ttlMs < ttlMin ? ttlMin : body.ttlMs
         }
         const id = subscriptionId(principal, urlValue, name, args)
         const refreshBefore =
@@ -343,8 +352,8 @@ export function createTestEventsServer(options: TestEventsServerOptions = {}) {
     )
   }
 
-  const capabilities = {
-    extensions: { [EVENTS_EXTENSION]: {} },
+  const capabilities: Record<string, unknown> = {
+    ...(advertiseExtensions ? { extensions: { [EVENTS_EXTENSION]: {} } } : {}),
   }
   const server = new Server(
     { name: 'events-test', version: '1.0.0' },
@@ -407,6 +416,7 @@ export function createTestEventsServer(options: TestEventsServerOptions = {}) {
     server,
     capturedClientCapabilities,
     capabilities,
+    advertiseEvents,
     requests,
     attach: attachEvents,
     emit,
@@ -414,6 +424,115 @@ export function createTestEventsServer(options: TestEventsServerOptions = {}) {
     terminate,
     subscriptions: () => [...subscriptions.values()],
   }
+}
+
+const MCP_NAME_SENTINEL_PREFIX = '=?base64?'
+const MCP_NAME_SENTINEL_SUFFIX = '?='
+
+function decodeMcpNameHeader(value: string): string {
+  if (
+    !value.startsWith(MCP_NAME_SENTINEL_PREFIX) ||
+    !value.endsWith(MCP_NAME_SENTINEL_SUFFIX)
+  ) {
+    return value
+  }
+  const encoded = value.slice(
+    MCP_NAME_SENTINEL_PREFIX.length,
+    value.length - MCP_NAME_SENTINEL_SUFFIX.length,
+  )
+  try {
+    const binary = atob(encoded)
+    const bytes = Uint8Array.from(binary, (char) => char.codePointAt(0) ?? 0)
+    return new TextDecoder().decode(bytes)
+  } catch {
+    return value
+  }
+}
+
+async function headerMismatchResponse(
+  request: Request,
+): Promise<Response | undefined> {
+  if (request.method !== 'POST') return undefined
+  let json: unknown
+  try {
+    json = await request.clone().json()
+  } catch {
+    return undefined
+  }
+  if (!isRecord(json)) return undefined
+  if (
+    json.method !== 'events/subscribe' &&
+    json.method !== 'events/unsubscribe'
+  ) {
+    return undefined
+  }
+  const name =
+    isRecord(json.params) && typeof json.params.name === 'string'
+      ? json.params.name
+      : undefined
+  const header = request.headers.get('mcp-name')
+  const decoded = header === null ? undefined : decodeMcpNameHeader(header)
+  if (decoded !== undefined && decoded === name) return undefined
+  const id =
+    typeof json.id === 'string' || typeof json.id === 'number' ? json.id : null
+  return Response.json(
+    {
+      jsonrpc: '2.0',
+      id,
+      error: { code: -32020, message: 'HeaderMismatch' },
+    },
+    { status: 400 },
+  )
+}
+
+function patchAdvertisedEvents(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(patchAdvertisedEvents)
+  if (!isRecord(value) || !isRecord(value.result)) return value
+  if (!isRecord(value.result.capabilities)) return value
+  if (isRecord(value.result.capabilities.events)) return value
+  return {
+    ...value,
+    result: {
+      ...value.result,
+      capabilities: { ...value.result.capabilities, events: {} },
+    },
+  }
+}
+
+async function withAdvertisedEvents(
+  response: Response,
+  advertiseEvents: boolean,
+): Promise<Response> {
+  if (!(response instanceof Response) || !advertiseEvents) return response
+  const contentType = response.headers.get('content-type') ?? ''
+  if (!contentType.toLowerCase().includes('json')) return response
+  const text = await response.text()
+  if (text.length === 0) {
+    return new Response(text, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    })
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return new Response(text, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    })
+  }
+  return new Response(JSON.stringify(patchAdvertisedEvents(parsed)), {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  })
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 /** Streamable HTTP fetch handler around a test events server. */
@@ -434,7 +553,11 @@ export function eventsHttpFetch(
   })
   const stateless = legacyStatelessFallback(factory)
   return async (request: Request) => {
-    if (await isLegacyRequest(request)) return stateless(request)
-    return modern.fetch(request)
+    const mismatch = await headerMismatchResponse(request)
+    if (mismatch) return mismatch
+    const response = (await isLegacyRequest(request))
+      ? await stateless(request)
+      : await modern.fetch(request)
+    return withAdvertisedEvents(response, events.advertiseEvents)
   }
 }

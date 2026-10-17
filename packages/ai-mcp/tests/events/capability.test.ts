@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
+import type { Transport } from '@modelcontextprotocol/client'
 import {
   MCP_EVENTS_EXTENSION,
   SEP_REVISION,
+  attachHandshakeCapture,
+  mergeHandshakeCapabilities,
   serverSupportsEvents,
   withEventsClientCapability,
 } from '../../src/events/capability'
@@ -19,12 +22,64 @@ describe('serverSupportsEvents', () => {
     expect(serverSupportsEvents({ experimental: { events: {} } })).toBe(true)
   })
 
-  it('is false for a top-level events capability', () => {
-    expect(serverSupportsEvents({ events: {} })).toBe(false)
+  it('is true for a top-level events capability', () => {
+    // OpenAI ChatGPT and the WG sketch advertise `capabilities.events`.
+    // SDK 2.1.0 strips that key from getServerCapabilities(); this helper
+    // still accepts it when the caller passes the raw handshake body.
+    expect(serverSupportsEvents({ events: {} })).toBe(true)
   })
 
   it('is false for undefined', () => {
     expect(serverSupportsEvents(undefined)).toBe(false)
+  })
+})
+
+describe('mergeHandshakeCapabilities', () => {
+  it('copies events from the raw handshake when the parsed caps dropped it', () => {
+    expect(
+      mergeHandshakeCapabilities({ tools: {} }, { tools: {}, events: {} }),
+    ).toEqual({ tools: {}, events: {} })
+  })
+
+  it('does not overwrite parsed events', () => {
+    expect(
+      mergeHandshakeCapabilities({ events: { keep: true } }, { events: {} }),
+    ).toEqual({ events: { keep: true } })
+  })
+})
+
+describe('attachHandshakeCapture', () => {
+  it('reads capabilities from a raw initialize result', async () => {
+    let delivered: unknown
+    const transport: Transport = {
+      start: async () => {},
+      close: async () => {},
+      send: async (message) => {
+        const id =
+          typeof message === 'object' && message !== null && 'id' in message
+            ? message.id
+            : undefined
+        transport.onmessage?.({
+          jsonrpc: '2.0',
+          id,
+          result: { capabilities: { events: {} } },
+        } as never)
+      },
+    }
+    const raw = attachHandshakeCapture(transport)
+    transport.onmessage = (message) => {
+      delivered = message
+    }
+    await transport.send({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: {},
+    } as never)
+    expect(raw()).toEqual({ events: {} })
+    expect(delivered).toMatchObject({
+      result: { capabilities: { events: {} } },
+    })
   })
 })
 

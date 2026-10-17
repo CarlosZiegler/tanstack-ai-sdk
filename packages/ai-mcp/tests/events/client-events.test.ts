@@ -1,15 +1,29 @@
+import { createServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { describe, expect, it } from 'vitest'
 import { InMemoryTransport } from '@modelcontextprotocol/client'
 import { createMCPClient } from '../../src/client'
 import {
   MCPEventConfigError,
   MCPEventRequestError,
+  MCPEventsUnsupportedError,
 } from '../../src/errors'
 import { MCP_EVENTS_EXTENSION } from '../../src/events/capability'
 import { createMCPEventWebhook } from '../../src/events/webhook'
 import { inMemoryMCPEventStore } from '../../src/events/memory-store'
-import { createTestEventsServer } from '../helpers/events-server'
-import type { MCPEventOccurrence, MCPEventSubscriptionInfo } from '../../src/events/types'
+import {
+  createTestEventsServer,
+  eventsHttpFetch,
+} from '../helpers/events-server'
+import {
+  readRawBody,
+  sendWebResponse,
+  toWebRequest,
+} from '../helpers/node-request'
+import type {
+  MCPEventOccurrence,
+  MCPEventSubscriptionInfo,
+} from '../../src/events/types'
 
 const definition = {
   name: 'incident.created',
@@ -170,9 +184,7 @@ describe('createMCPClient experimental_events', () => {
       experimental_events: { store: inMemoryMCPEventStore() },
     })
     await client.experimental_events.list()
-    expect(
-      withEvents.capturedClientCapabilities.at(-1),
-    ).toMatchObject({
+    expect(withEvents.capturedClientCapabilities.at(-1)).toMatchObject({
       extensions: { [MCP_EVENTS_EXTENSION]: {} },
     })
     await client.close()
@@ -229,5 +241,98 @@ describe('createMCPClient experimental_events', () => {
         },
       }),
     ).rejects.toBeInstanceOf(MCPEventConfigError)
+  })
+})
+
+async function listenHttp(
+  fetchImpl: (request: Request) => Promise<Response>,
+): Promise<{ url: string; close: () => Promise<void> }> {
+  const server = createServer(async (req, res) => {
+    const raw = await readRawBody(req)
+    const request = toWebRequest(req, raw)
+    await sendWebResponse(res, await fetchImpl(request))
+  })
+  await new Promise<void>((resolve) => {
+    server.listen(0, '127.0.0.1', () => resolve())
+  })
+  const port = (server.address() as AddressInfo).port
+  return {
+    url: `http://127.0.0.1:${port}/mcp`,
+    close: () =>
+      new Promise((resolve, reject) => {
+        server.close((err) => (err ? reject(err) : resolve()))
+      }),
+  }
+}
+
+describe('createMCPClient HTTP capability detection', () => {
+  it('lists and subscribes when the server advertises only events: {}', async () => {
+    const store = inMemoryMCPEventStore()
+    const webhook = createMCPEventWebhook({ store, onEvent: () => undefined })
+    const events = createTestEventsServer({
+      events: [definition],
+      deliver: (request) => webhook(request),
+      allowHttpLoopback: true,
+      verify: 'challenge',
+      advertise: { extensions: false, events: true },
+    })
+    const http = await listenHttp(eventsHttpFetch(events))
+    const client = await createMCPClient({
+      transport: { type: 'http', url: http.url },
+      experimental_events: { store },
+    })
+    try {
+      const listed = await client.experimental_events.list()
+      expect(listed.map((item) => item.name)).toEqual(['incident.created'])
+      const sub = await client.experimental_events.subscribe({
+        name: 'incident.created',
+        delivery: {
+          mode: 'webhook',
+          url: 'http://127.0.0.1/hook',
+          allowInsecureLocalhost: true,
+        },
+      })
+      expect(sub.id).toBeTypeOf('string')
+    } finally {
+      await client.close()
+      await http.close()
+    }
+  })
+
+  it('throws MCPEventsUnsupportedError when the server advertises neither key', async () => {
+    const events = createTestEventsServer({
+      verify: 'skip',
+      advertise: { extensions: false, events: false },
+    })
+    const http = await listenHttp(eventsHttpFetch(events))
+    const client = await createMCPClient({
+      transport: { type: 'http', url: http.url },
+    })
+    try {
+      await expect(client.experimental_events.list()).rejects.toBeInstanceOf(
+        MCPEventsUnsupportedError,
+      )
+    } finally {
+      await client.close()
+      await http.close()
+    }
+  })
+
+  it('still lists when the server advertises extensions only', async () => {
+    const events = createTestEventsServer({
+      verify: 'skip',
+      advertise: { extensions: true, events: false },
+    })
+    const http = await listenHttp(eventsHttpFetch(events))
+    const client = await createMCPClient({
+      transport: { type: 'http', url: http.url },
+    })
+    try {
+      const listed = await client.experimental_events.list()
+      expect(listed.map((item) => item.name)).toEqual(['incident.created'])
+    } finally {
+      await client.close()
+      await http.close()
+    }
   })
 })

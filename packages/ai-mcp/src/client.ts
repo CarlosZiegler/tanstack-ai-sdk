@@ -8,10 +8,18 @@ import {
   MCPToolNotFoundError,
 } from './errors'
 import { listPages } from './list-pages'
-import { withEventsClientCapability, serverSupportsEvents } from './events/capability'
+import {
+  attachHandshakeCapture,
+  mergeHandshakeCapabilities,
+  serverSupportsEvents,
+  withEventsClientCapability,
+} from './events/capability'
 import { createDirectMCPEvents } from './events/direct'
 import { createDiscoveryMCPEvents } from './events/discovery'
-import { createManagedMCPEvents, validateMCPEventOperations } from './events/managed'
+import {
+  createManagedMCPEvents,
+  validateMCPEventOperations,
+} from './events/managed'
 import type {
   DirectMCPEventsOptions,
   ManagedMCPEvents,
@@ -198,9 +206,10 @@ export type ManagedMCPClient<
   readonly experimental_events: ManagedMCPEvents
 }
 
-class MCPClientImpl<
-  TServer extends ServerDescriptor,
-> implements Omit<MCPClient<TServer>, 'experimental_events'> {
+class MCPClientImpl<TServer extends ServerDescriptor> implements Omit<
+  MCPClient<TServer>,
+  'experimental_events'
+> {
   capabilities: TServer['capabilities'] = {}
   instructions: string | undefined
   experimental_events?: MCPEvents | ManagedMCPEvents
@@ -304,11 +313,17 @@ class MCPClientImpl<
       )
       // The connect handshake gets the request options too, so `timeout`
       // also limits a server that does not answer while it connects.
+      // SDK 2.1.0 strips top-level `capabilities.events`; read it from the
+      // raw initialize / server/discover JSON-RPC result instead.
+      const rawHandshake = attachHandshakeCapture(transport)
       await this.#client.connect(
         transport,
         sdkRequestOptions(this.#policy.requestOptions),
       )
-      this.capabilities = this.#client.getServerCapabilities() ?? {}
+      this.capabilities = mergeHandshakeCapabilities(
+        this.#client.getServerCapabilities() ?? {},
+        rawHandshake(),
+      )
       this.instructions = this.#client.getInstructions()
       this.experimental_events = this.#createEventsApi()
       // A failed listen only means that tool changes are not pushed.
@@ -554,7 +569,10 @@ class MCPClientImpl<
     if (this.#managedOps !== undefined) {
       return createManagedMCPEvents(ctx, this.#managedOps)
     }
-    if (this.#eventsOptions !== undefined && isDirectEvents(this.#eventsOptions)) {
+    if (
+      this.#eventsOptions !== undefined &&
+      isDirectEvents(this.#eventsOptions)
+    ) {
       return createDirectMCPEvents(ctx, this.#eventsOptions)
     }
     return createDiscoveryMCPEvents(ctx)
