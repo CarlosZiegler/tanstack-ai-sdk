@@ -33,6 +33,37 @@ async function withClient<T>(
   }
 }
 
+function sseInitializeCapabilities(text: string): unknown {
+  for (const line of text.split('\n')) {
+    if (!line.startsWith('data:')) continue
+    const payload = line.slice('data:'.length).trimStart()
+    if (payload.length === 0) continue
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(payload)
+    } catch {
+      continue
+    }
+    if (
+      typeof parsed !== 'object' ||
+      parsed === null ||
+      !('result' in parsed)
+    ) {
+      continue
+    }
+    const result = parsed.result
+    if (
+      typeof result !== 'object' ||
+      result === null ||
+      !('capabilities' in result)
+    ) {
+      continue
+    }
+    return result.capabilities
+  }
+  return undefined
+}
+
 describe('createTestEventsServer', () => {
   it('advertises extensions["io.modelcontextprotocol/events"]', async () => {
     const events = createTestEventsServer({ verify: 'skip' })
@@ -341,6 +372,38 @@ describe('createTestEventsServer', () => {
       )
       expect(verifications).toBe(2)
     })
+  })
+
+  it('injects top-level events into a legacy initialize SSE reply', async () => {
+    const events = createTestEventsServer({
+      verify: 'skip',
+      advertise: { extensions: false, events: true },
+    })
+    const response = await eventsHttpFetch(events)(
+      new Request('https://mcp.example.com/mcp', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'initialize',
+          params: {
+            protocolVersion: '2025-11-25',
+            capabilities: {},
+            clientInfo: { name: 'raw', version: '1.0.0' },
+          },
+        }),
+      }),
+    )
+    expect(response.headers.get('content-type') ?? '').toContain(
+      'text/event-stream',
+    )
+    const text = await response.text()
+    const capabilities = sseInitializeCapabilities(text)
+    expect(capabilities).toMatchObject({ events: {} })
   })
 
   it('returns HTTP 400 HeaderMismatch (-32020) for a mismatched Mcp-Name', async () => {

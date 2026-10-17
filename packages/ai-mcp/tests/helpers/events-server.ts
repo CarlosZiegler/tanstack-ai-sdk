@@ -32,7 +32,8 @@ export interface TestEventsServerOptions {
   maxAttempts?: number
   /**
    * Wire capability keys. SDK ServerCapabilitiesSchema strips top-level
-   * `events`, so that key is injected on HTTP discover/initialize JSON.
+   * `events`, so that key is injected on HTTP discover/initialize JSON and
+   * on legacy initialize SSE (`text/event-stream`).
    * Defaults: extensions and events both on (ChatGPT + SEP).
    */
   advertise?: { extensions?: boolean; events?: boolean }
@@ -499,36 +500,74 @@ function patchAdvertisedEvents(value: unknown): unknown {
   }
 }
 
+function patchSseAdvertisedEvents(text: string): string {
+  return text
+    .split('\n')
+    .map((line) => {
+      if (!line.startsWith('data:')) return line
+      const payload = line.slice('data:'.length).trimStart()
+      if (payload.length === 0) return line
+      try {
+        return `data: ${JSON.stringify(patchAdvertisedEvents(JSON.parse(payload)))}`
+      } catch {
+        return line
+      }
+    })
+    .join('\n')
+}
+
+function replayResponse(response: Response, body: BodyInit): Response {
+  return new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  })
+}
+
+function patchSseStream(
+  body: ReadableStream<Uint8Array>,
+): ReadableStream<Uint8Array> {
+  const decoder = new TextDecoder()
+  const encoder = new TextEncoder()
+  let pending = ''
+  return body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        pending += decoder.decode(chunk, { stream: true })
+        const lastNewline = pending.lastIndexOf('\n')
+        if (lastNewline === -1) return
+        const complete = pending.slice(0, lastNewline + 1)
+        pending = pending.slice(lastNewline + 1)
+        controller.enqueue(encoder.encode(patchSseAdvertisedEvents(complete)))
+      },
+      flush(controller) {
+        if (pending.length === 0) return
+        controller.enqueue(encoder.encode(patchSseAdvertisedEvents(pending)))
+      },
+    }),
+  )
+}
+
 async function withAdvertisedEvents(
   response: Response,
   advertiseEvents: boolean,
 ): Promise<Response> {
   if (!(response instanceof Response) || !advertiseEvents) return response
-  const contentType = response.headers.get('content-type') ?? ''
-  if (!contentType.toLowerCase().includes('json')) return response
-  const text = await response.text()
-  if (text.length === 0) {
-    return new Response(text, {
-      status: response.status,
-      statusText: response.statusText,
-      headers: response.headers,
-    })
+  const contentType = (response.headers.get('content-type') ?? '').toLowerCase()
+  if (contentType.includes('text/event-stream')) {
+    if (response.body === null) return response
+    return replayResponse(response, patchSseStream(response.body))
   }
+  if (!contentType.includes('json')) return response
+  const text = await response.text()
+  if (text.length === 0) return replayResponse(response, text)
   let parsed: unknown
   try {
     parsed = JSON.parse(text)
   } catch {
-    return new Response(text, {
-      status: response.status,
-      statusText: response.statusText,
-      headers: response.headers,
-    })
+    return replayResponse(response, text)
   }
-  return new Response(JSON.stringify(patchAdvertisedEvents(parsed)), {
-    status: response.status,
-    statusText: response.statusText,
-    headers: response.headers,
-  })
+  return replayResponse(response, JSON.stringify(patchAdvertisedEvents(parsed)))
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
