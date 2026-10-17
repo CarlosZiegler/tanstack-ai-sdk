@@ -79,4 +79,28 @@ describe('resolveTransport', () => {
       resolveTransport({ type: 'stdio', command: 'node', args: [] }),
     ).rejects.toThrow(/@tanstack\/ai-mcp\/stdio/)
   })
+
+  it('sets Mcp-Name for events/subscribe over http transport', async () => {
+    const seen: Array<Request> = []
+    const t = await resolveTransport({
+      type: 'http',
+      url: 'https://example.com/mcp',
+      fetch: async (input, init) => {
+        seen.push(new Request(input, init))
+        return new Response('{}')
+      },
+    })
+    const wrapped = Reflect.get(t, '_fetch') as typeof fetch
+    await wrapped('https://example.com/mcp', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'events/subscribe',
+        params: { name: 'incident.created' },
+      }),
+    })
+    expect(seen[0]?.headers.get('mcp-name')).toBe('incident.created')
+  })
 })

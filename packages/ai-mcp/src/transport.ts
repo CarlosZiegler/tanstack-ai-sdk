@@ -53,6 +53,46 @@ export function isTransportInstance(input: TransportInput): input is Transport {
  * For stdio, build the Transport with `stdioTransport` and pass that instance.
  * Throws an Error when the config type is `stdio` or is not a known type.
  */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/**
+ * SDK 2.1.0 does not send `Mcp-Name` for custom `events/*` methods.
+ * SEP-3415 requires it on Streamable HTTP for name-scoped events requests.
+ */
+async function mcpNameFromRpc(request: Request): Promise<string | undefined> {
+  if (request.method !== 'POST') return undefined
+  let json: unknown
+  try {
+    json = await request.clone().json()
+  } catch {
+    return undefined
+  }
+  if (!isRecord(json)) return undefined
+  if (json.method !== 'events/subscribe' && json.method !== 'events/unsubscribe') {
+    return undefined
+  }
+  if (!isRecord(json.params) || typeof json.params.name !== 'string') {
+    return undefined
+  }
+  return json.params.name
+}
+
+function fetchWithMcpEventName(baseFetch: typeof fetch = fetch): typeof fetch {
+  return async (input, init) => {
+    const request = new Request(input, init)
+    if (request.headers.has('mcp-name')) {
+      return baseFetch(input, init)
+    }
+    const name = await mcpNameFromRpc(request)
+    if (name === undefined) return baseFetch(input, init)
+    const headers = new Headers(request.headers)
+    headers.set('Mcp-Name', name)
+    return baseFetch(new Request(request, { headers }))
+  }
+}
+
 export async function resolveTransport(input: TransportInput) {
   if (isTransportInstance(input)) return input
 
@@ -60,13 +100,13 @@ export async function resolveTransport(input: TransportInput) {
     case 'http':
       return new StreamableHTTPClientTransport(new URL(input.url), {
         requestInit: { headers: input.headers },
-        fetch: input.fetch,
+        fetch: fetchWithMcpEventName(input.fetch),
         authProvider: input.authProvider,
       })
     case 'sse':
       return new SSEClientTransport(new URL(input.url), {
         requestInit: { headers: input.headers },
-        fetch: input.fetch,
+        fetch: fetchWithMcpEventName(input.fetch),
         authProvider: input.authProvider,
       })
     case 'stdio':

@@ -86,6 +86,7 @@ describe('MCP SDK contract for Events', () => {
   it('drops a top-level "events" capability (documents why we read extensions)', async () => {
     const server = new Server(
       { name: 'legacy-events', version: '1.0.0' },
+      // @ts-expect-error top-level events is stripped by ServerCapabilitiesSchema
       { capabilities: { events: {} } },
     )
     const clientTransport = await openInMemory(server)
