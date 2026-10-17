@@ -16,13 +16,22 @@ function asObjectData(value: unknown): Record<string, unknown> {
   return asRecord(value) ?? {}
 }
 
+function loopbackOrigin(url: string): string {
+  const parsed = new URL(url)
+  if (parsed.hostname === 'localhost') parsed.hostname = '127.0.0.1'
+  return parsed.origin
+}
+
 export const Route = createFileRoute('/api/mcp-events-control')({
   server: {
     handlers: {
       POST: async ({ request }) => {
         const body = asRecord(await request.json())
         if (body === undefined) {
-          return Response.json({ error: 'JSON object required' }, { status: 400 })
+          return Response.json(
+            { error: 'JSON object required' },
+            { status: 400 },
+          )
         }
         const testId = typeof body.testId === 'string' ? body.testId : undefined
         const op = typeof body.op === 'string' ? body.op : undefined
@@ -33,6 +42,7 @@ export const Route = createFileRoute('/api/mcp-events-control')({
           )
         }
         const origin = new URL(request.url).origin
+        const webhookOrigin = loopbackOrigin(request.url)
         if (op === 'reset') {
           await resetMcpEventsSession(testId)
           return Response.json({ ok: true })
@@ -44,7 +54,7 @@ export const Route = createFileRoute('/api/mcp-events-control')({
             name: 'incident.created',
             delivery: {
               mode: 'webhook',
-              url: `${origin}/api/mcp-events-webhook?session=${encodeURIComponent(testId)}`,
+              url: `${webhookOrigin}/api/mcp-events-webhook?session=${encodeURIComponent(testId)}`,
               allowInsecureLocalhost: true,
             },
           })
@@ -59,7 +69,8 @@ export const Route = createFileRoute('/api/mcp-events-control')({
         }
         if (op === 'gap') {
           const id = typeof body.id === 'string' ? body.id : undefined
-          const cursor = typeof body.cursor === 'string' ? body.cursor : undefined
+          const cursor =
+            typeof body.cursor === 'string' ? body.cursor : undefined
           if (id === undefined || cursor === undefined) {
             return Response.json(
               { error: 'id and cursor are required' },
@@ -94,7 +105,9 @@ export const Route = createFileRoute('/api/mcp-events-control')({
             events: session.received,
             gaps: session.gaps,
             terminations: session.terminations,
-            subscriptions: session.events.subscriptions().map((item) => item.id),
+            subscriptions: session.events
+              .subscriptions()
+              .map((item) => item.id),
           })
         }
         return Response.json({ error: `unknown op ${op}` }, { status: 400 })

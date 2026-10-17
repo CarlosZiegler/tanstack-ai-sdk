@@ -30,13 +30,6 @@ function createSession(): Session {
   const received: Array<MCPEventOccurrence> = []
   const gaps: Array<{ cursor: string }> = []
   const terminations: Array<{ code: number; message: string }> = []
-  const events = createTestEventsServer({
-    deliver: (request) => fetch(request),
-    allowHttpLoopback: true,
-    verify: 'challenge',
-    ttlMs: { default: 60_000, min: 1 },
-    maxAttempts: 3,
-  })
   const webhook = createMCPEventWebhook({
     store,
     onEvent: ({ event }) => {
@@ -51,6 +44,17 @@ function createSession(): Session {
         message: termination.message,
       })
     },
+  })
+  const events = createTestEventsServer({
+    // Vite's e2e server binds `localhost` (often IPv6-only). The client
+    // rejects `localhost` as an http callback host, so subscribe uses
+    // 127.0.0.1 and deliveries run in-process through the same handler
+    // the HTTP route uses. Package e2e covers signed webhooks over TCP.
+    deliver: (request) => webhook(request),
+    allowHttpLoopback: true,
+    verify: 'challenge',
+    ttlMs: { default: 60_000, min: 1 },
+    maxAttempts: 3,
   })
   return {
     store,
