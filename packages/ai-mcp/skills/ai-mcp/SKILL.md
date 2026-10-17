@@ -1181,8 +1181,11 @@ Gotchas:
 - Dedupe deliveries on `messageId`. A 503 after `onEvent` succeeded is retried.
 
 Capability check: `extensions["io.modelcontextprotocol/events"]`, then
-`experimental.events`. HTTP/SSE transports add `Mcp-Name` for
-`events/subscribe` and `events/unsubscribe`.
+`experimental.events`, then top-level `events` from the raw handshake
+(SDK 2.1.0 strips that key). HTTP/SSE transports add `Mcp-Name` for
+`events/subscribe` and `events/unsubscribe` (Base64 sentinel when the
+name is not printable ASCII). OpenAI `-32015` with a known
+`data.reason` maps to `kind: 'callback-endpoint'` (SEP uses `-32027`).
 
 ## Error classes
 

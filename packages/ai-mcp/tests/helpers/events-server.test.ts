@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client'
 import { createMCPEventSecret } from '../../src/events/secret'
 import { MCP_EVENTS_EXTENSION } from '../../src/events/capability'
-import { createTestEventsServer } from './events-server'
+import { createTestEventsServer, eventsHttpFetch } from './events-server'
 import { passThroughSchema } from './pass-through-schema'
 import type { MCPEventDefinition } from '../../src/events/types'
 
@@ -36,7 +36,9 @@ async function withClient<T>(
 describe('createTestEventsServer', () => {
   it('advertises extensions["io.modelcontextprotocol/events"]', async () => {
     const events = createTestEventsServer({ verify: 'skip' })
-    expect(events.capabilities.extensions[MCP_EVENTS_EXTENSION]).toEqual({})
+    expect(events.capabilities).toMatchObject({
+      extensions: { [MCP_EVENTS_EXTENSION]: {} },
+    })
     await withClient(events, async (client) => {
       expect(
         client.getServerCapabilities()?.extensions?.[MCP_EVENTS_EXTENSION],
@@ -100,7 +102,9 @@ describe('createTestEventsServer', () => {
         },
         passThroughSchema,
       )
-      expect((other as { id: string }).id).not.toBe((first as { id: string }).id)
+      expect((other as { id: string }).id).not.toBe(
+        (first as { id: string }).id,
+      )
     })
   })
 
@@ -242,5 +246,126 @@ describe('createTestEventsServer', () => {
     const result = await events.emit('incident.created', { ok: true })
     expect(result[0]).toEqual({ status: 410, attempts: 1 })
     expect(calls).toBe(1)
+  })
+
+  it('clamps ttlMs below min up to the minimum instead of rejecting', async () => {
+    const min = 60_000
+    const events = createTestEventsServer({
+      verify: 'skip',
+      allowHttpLoopback: true,
+      ttlMs: { default: 3_600_000, min },
+    })
+    const before = Date.now()
+    await withClient(events, async (client) => {
+      const result = await client.request(
+        {
+          method: 'events/subscribe',
+          params: {
+            name: 'incident.created',
+            arguments: {},
+            delivery: {
+              mode: 'webhook',
+              url: 'http://127.0.0.1/hook',
+              secret: createMCPEventSecret(),
+            },
+            cursor: null,
+            ttlMs: 1,
+          },
+        },
+        passThroughSchema,
+      )
+      const refreshBefore = (result as { refreshBefore: string }).refreshBefore
+      const at = Date.parse(refreshBefore)
+      expect(at).toBeGreaterThanOrEqual(before + min - 50)
+      expect(at).toBeLessThan(before + min + 5_000)
+    })
+  })
+
+  it('caches successful verification per principal and URL', async () => {
+    let verifications = 0
+    const events = createTestEventsServer({
+      verify: 'challenge',
+      allowHttpLoopback: true,
+      deliver: async (request) => {
+        const body: unknown = await request.clone().json()
+        if (
+          typeof body === 'object' &&
+          body !== null &&
+          'type' in body &&
+          body.type === 'verification'
+        ) {
+          verifications += 1
+          const challenge =
+            'challenge' in body && typeof body.challenge === 'string'
+              ? body.challenge
+              : ''
+          return Response.json({ challenge }, { status: 200 })
+        }
+        return new Response(null, { status: 204 })
+      },
+    })
+    await withClient(events, async (client) => {
+      const params = {
+        name: 'incident.created',
+        arguments: {},
+        delivery: {
+          mode: 'webhook',
+          url: 'http://127.0.0.1/hook',
+          secret: createMCPEventSecret(),
+        },
+        cursor: null,
+      }
+      await client.request(
+        { method: 'events/subscribe', params },
+        passThroughSchema,
+      )
+      expect(verifications).toBe(1)
+      await client.request(
+        { method: 'events/subscribe', params },
+        passThroughSchema,
+      )
+      expect(verifications).toBe(1)
+      await client.request(
+        {
+          method: 'events/subscribe',
+          params: {
+            ...params,
+            delivery: {
+              ...params.delivery,
+              url: 'http://127.0.0.1/other',
+              secret: createMCPEventSecret(),
+            },
+          },
+        },
+        passThroughSchema,
+      )
+      expect(verifications).toBe(2)
+    })
+  })
+
+  it('returns HTTP 400 HeaderMismatch (-32020) for a mismatched Mcp-Name', async () => {
+    const events = createTestEventsServer({ verify: 'skip' })
+    const fetchImpl = eventsHttpFetch(events)
+    const response = await fetchImpl(
+      new Request('https://mcp.example.com/mcp', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'mcp-name': 'other.event',
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 7,
+          method: 'events/subscribe',
+          params: { name: 'incident.created' },
+        }),
+      }),
+    )
+    expect(response.status).toBe(400)
+    expect(await response.json()).toMatchObject({
+      jsonrpc: '2.0',
+      id: 7,
+      error: { code: -32020, message: 'HeaderMismatch' },
+    })
   })
 })
