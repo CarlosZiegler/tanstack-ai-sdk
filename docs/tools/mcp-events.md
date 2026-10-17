@@ -64,10 +64,13 @@ const events = await mcp.experimental_events.list()
 
 `list()` works without a store. `subscribe` throws until you pass `{ store }` or `{ adapter }`.
 
-The client sends `events/*` only when the server advertised the extension:
+The client sends `events/*` only when the server advertised Events:
 
-1. `capabilities.extensions["io.modelcontextprotocol/events"]`
-2. or `capabilities.experimental.events` (fallback for some example servers)
+1. `capabilities.extensions["io.modelcontextprotocol/events"]` (SEP-3415)
+2. or `capabilities.experimental.events` (example servers)
+3. or top-level `capabilities.events` (OpenAI ChatGPT / WG sketch)
+
+SDK 2.1.0 `getServerCapabilities()` drops the top-level `events` key. The client reads that key from the raw `initialize` / `server/discover` result.
 
 Otherwise it throws `MCPEventsUnsupportedError`.
 
@@ -115,6 +118,8 @@ await mcp.experimental_events.refresh({ key: sub.key })
 ```
 
 Unsubscribe sends `{ mode: 'webhook', url }` and deletes the local record. If the server returns NotFound, the local record is still deleted.
+
+`MCPEventRequestError.kind` is `callback-endpoint` for SEP `-32027`. OpenAI servers may send `-32015` with `data.reason` in `connection_refused`, `timeout`, `tls_error`, `http_4xx`, `http_5xx`, or `challenge_failed`. The client maps that alias the same way. Any other `-32015` stays `kind: 'unknown'`.
 
 ## Receive webhooks
 
@@ -371,11 +376,11 @@ Treat that snippet as a sketch. Production delivery needs a durable store, retri
 
 | Symptom | Check |
 |---|---|
-| `MCPEventsUnsupportedError` | The server did not advertise the extension key |
+| `MCPEventsUnsupportedError` | The server did not advertise `extensions`, `experimental.events`, or `events` |
 | 401 on every delivery | Middleware parsed the body. Use the raw bytes |
 | 401 without a query string | A proxy dropped `mcp_event_subscription` |
 | Duplicate `onEvent` calls | Dedupe on `messageId`. 503 after a store failure retries |
 | Subscribe times out | The pending record stays. Call `refresh({ key })` |
-| `Mcp-Name` missing | HTTP and SSE transports wrap `fetch` for `events/subscribe` and `events/unsubscribe` |
+| `Mcp-Name` missing | HTTP and SSE transports wrap `fetch` for `events/subscribe` and `events/unsubscribe`. Non-ASCII names use `=?base64?…?=` |
 
 Next: put `createMCPEventWebhook` on a POST route and subscribe with `{ store }` pointing at that URL.
