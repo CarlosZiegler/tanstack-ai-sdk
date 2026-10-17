@@ -316,14 +316,19 @@ class MCPClientImpl<TServer extends ServerDescriptor> implements Omit<
       // SDK 2.1.0 strips top-level `capabilities.events`; read it from the
       // raw initialize / server/discover JSON-RPC result instead.
       const rawHandshake = attachHandshakeCapture(transport)
-      await this.#client.connect(
-        transport,
-        sdkRequestOptions(this.#policy.requestOptions),
-      )
-      this.capabilities = mergeHandshakeCapabilities(
-        this.#client.getServerCapabilities() ?? {},
-        rawHandshake(),
-      )
+      try {
+        await this.#client.connect(
+          transport,
+          sdkRequestOptions(this.#policy.requestOptions),
+        )
+        this.capabilities = mergeHandshakeCapabilities(
+          this.#client.getServerCapabilities() ?? {},
+          rawHandshake(),
+        )
+      } catch (err) {
+        rawHandshake()
+        throw err
+      }
       this.instructions = this.#client.getInstructions()
       this.experimental_events = this.#createEventsApi()
       // A failed listen only means that tool changes are not pushed.

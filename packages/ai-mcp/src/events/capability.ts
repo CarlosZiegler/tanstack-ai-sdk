@@ -67,6 +67,7 @@ export function attachHandshakeCapture(
   const pending = new Set<string | number>()
   let captured: Record<string, unknown> | undefined
   let userHandler: Transport['onmessage']
+  let attached = true
 
   const wrapped = (message: unknown, extra?: unknown) => {
     captureHandshake(message, pending, (caps) => {
@@ -92,7 +93,19 @@ export function attachHandshakeCapture(
     },
   })
 
-  return () => captured
+  return () => {
+    if (attached) {
+      attached = false
+      transport.send = send
+      Object.defineProperty(transport, 'onmessage', {
+        configurable: true,
+        enumerable: true,
+        writable: true,
+        value: userHandler,
+      })
+    }
+    return captured
+  }
 }
 
 function rememberHandshakeId(message: unknown, pending: Set<string | number>) {

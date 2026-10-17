@@ -81,6 +81,32 @@ describe('attachHandshakeCapture', () => {
       result: { capabilities: { events: {} } },
     })
   })
+
+  it('detaches so a later onmessage wrapper does not recurse', () => {
+    const transport: Transport = {
+      start: async () => {},
+      close: async () => {},
+      send: async () => {},
+    }
+    const take = attachHandshakeCapture(transport)
+    let fromProtocol = 0
+    transport.onmessage = () => {
+      fromProtocol += 1
+    }
+    take()
+    const previous = transport.onmessage
+    let fromTap = 0
+    transport.onmessage = (message, extra) => {
+      fromTap += 1
+      previous?.(message, extra)
+    }
+    transport.onmessage?.({
+      jsonrpc: '2.0',
+      method: 'notifications/x',
+    } as never)
+    expect(fromTap).toBe(1)
+    expect(fromProtocol).toBe(1)
+  })
 })
 
 describe('withEventsClientCapability', () => {
