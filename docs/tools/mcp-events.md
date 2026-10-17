@@ -20,17 +20,22 @@ An MCP server can push work to you: a new incident, a finished job, a ticket cha
 
 ## Install
 
-You need the client package and the events subpath.
+Install the client package. The events API is a subpath of that package.
 
-```ts
-import { createMCPClient } from '@tanstack/ai-mcp'
-import {
-  createMCPEventWebhook,
-  inMemoryMCPEventStore,
-} from '@tanstack/ai-mcp/events'
-```
+<!-- ::start:tabs variant="package-manager" mode="install" -->
 
-Keep the subscription store on the server. It holds HMAC secrets.
+react: @tanstack/ai-mcp @modelcontextprotocol/client
+vue: @tanstack/ai-mcp @modelcontextprotocol/client
+solid: @tanstack/ai-mcp @modelcontextprotocol/client
+svelte: @tanstack/ai-mcp @modelcontextprotocol/client
+preact: @tanstack/ai-mcp @modelcontextprotocol/client
+angular: @tanstack/ai-mcp @modelcontextprotocol/client
+vanilla: @tanstack/ai-mcp @modelcontextprotocol/client
+octane: @tanstack/ai-mcp @modelcontextprotocol/client
+
+<!-- ::end:tabs -->
+
+Import the client from `@tanstack/ai-mcp`. Import the webhook and the store from `@tanstack/ai-mcp/events`. Keep the store on the server. It holds HMAC secrets.
 
 ## Pick a mode
 
@@ -45,6 +50,8 @@ The client option is `experimental_events`. The `./events` exports have no `expe
 ## List events
 
 ```ts
+import { createMCPClient } from '@tanstack/ai-mcp'
+
 const mcp = await createMCPClient({
   transport: {
     type: 'http',
@@ -66,7 +73,8 @@ Otherwise it throws `MCPEventsUnsupportedError`.
 
 ## Subscribe (direct)
 
-```ts
+```ts group=direct-events
+import { createMCPClient } from '@tanstack/ai-mcp'
 import { inMemoryMCPEventStore } from '@tanstack/ai-mcp/events'
 
 const store = inMemoryMCPEventStore()
@@ -102,7 +110,7 @@ Pass `allowInsecureLocalhost: true` only for `http://127.0.0.1` or `http://[::1]
 
 Refresh is a second subscribe with the stored secret and cursor:
 
-```ts
+```ts group=direct-events
 await mcp.experimental_events.refresh({ key: sub.key })
 ```
 
@@ -114,9 +122,10 @@ Handle the raw body. Do not parse JSON and stringify it again. The signature is 
 
 ### TanStack Start
 
-```ts
+```ts ignore
 import { createFileRoute } from '@tanstack/react-router'
 import { createMCPEventWebhook, inMemoryMCPEventStore } from '@tanstack/ai-mcp/events'
+import { queue } from './queue'
 
 const store = inMemoryMCPEventStore()
 
@@ -140,6 +149,7 @@ export const Route = createFileRoute('/api/mcp-events')({
 
 ```ts
 import { createMCPEventWebhook, inMemoryMCPEventStore } from '@tanstack/ai-mcp/events'
+import { queue } from './queue'
 
 const store = inMemoryMCPEventStore()
 const webhook = createMCPEventWebhook({
@@ -158,9 +168,10 @@ export async function POST(request: Request) {
 
 Read the raw buffer. Skip `express.json()` on this route.
 
-```ts
+```ts ignore
 import express from 'express'
 import { createMCPEventWebhook, inMemoryMCPEventStore } from '@tanstack/ai-mcp/events'
+import { queue } from './queue'
 
 const app = express()
 const store = inMemoryMCPEventStore()
@@ -216,6 +227,8 @@ import type { MCPClient } from '@tanstack/ai-mcp'
 import type { MCPEventStore } from '@tanstack/ai-mcp/events'
 
 async function renewDue(store: MCPEventStore, mcp: MCPClient) {
+  const events = mcp.experimental_events
+  if (events === undefined) return
   const now = Date.now()
   const list = store.list
   if (list === undefined) return
@@ -226,7 +239,7 @@ async function renewDue(store: MCPEventStore, mcp: MCPClient) {
     }
     const due = Date.parse(record.refreshBefore)
     if (Number.isNaN(due) || due - now > 60_000) continue
-    await mcp.experimental_events.refresh({ key: record.key })
+    await events.refresh({ key: record.key })
   }
 }
 ```
@@ -257,8 +270,12 @@ Do not treat `events/list` schemas as a security boundary. Pass `validateArgumen
 ```ts
 import { chat } from '@tanstack/ai'
 import { openaiText } from '@tanstack/ai-openai'
-import { createMCPEventWebhook } from '@tanstack/ai-mcp/events'
+import {
+  createMCPEventWebhook,
+  inMemoryMCPEventStore,
+} from '@tanstack/ai-mcp/events'
 
+const store = inMemoryMCPEventStore()
 const webhook = createMCPEventWebhook({
   store,
   onEvent: async ({ event }) => {
@@ -285,6 +302,9 @@ Close MCP clients after the stream drains if you also pass `mcp: { clients }`.
 Pass `{ adapter }` when a host owns the webhook endpoint.
 
 ```ts
+import { createMCPClient } from '@tanstack/ai-mcp'
+import { adapter } from './adapter'
+
 const mcp = await createMCPClient({
   transport: {
     type: 'http',
@@ -307,7 +327,7 @@ await mcp.experimental_events.subscribe({
 
 This package does not ship `createMCPServer({ events })` yet. A low-level SDK `Server` can still advertise the extension:
 
-```ts
+```ts ignore
 import { Server } from '@modelcontextprotocol/server'
 
 const passThrough = {

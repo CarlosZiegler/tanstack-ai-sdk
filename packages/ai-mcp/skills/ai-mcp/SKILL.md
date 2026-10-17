@@ -1149,6 +1149,7 @@ import {
   createMCPEventWebhook,
   inMemoryMCPEventStore,
 } from '@tanstack/ai-mcp/events'
+import { queue } from './queue'
 
 const store = inMemoryMCPEventStore()
 const mcp = await createMCPClient({
