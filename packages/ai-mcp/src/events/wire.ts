@@ -131,20 +131,6 @@ export const subscribeResult: MCPStandardSchema<SubscribeEventsResult> = {
   },
 }
 
-export const eventOccurrence: MCPStandardSchema<MCPEventOccurrence> = {
-  '~standard': {
-    version: 1,
-    vendor: 'tanstack-ai-mcp',
-    validate(value: unknown) {
-      const event = parseEventOccurrence(value)
-      if (event === undefined) {
-        return issues('invalid event occurrence')
-      }
-      return { value: event }
-    },
-  },
-}
-
 function parseEventOccurrence(value: unknown): MCPEventOccurrence | undefined {
   if (!isRecord(value)) return undefined
   if (!isNonEmptyString(value.eventId) || !isNonEmptyString(value.name)) {
