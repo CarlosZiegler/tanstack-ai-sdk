@@ -9,7 +9,6 @@
     "test:types": "tsc"
   },
   "dependencies": {
-    "@modelcontextprotocol/server": "^2.0.0",
     "@tailwindcss/vite": "^4.1.18",
     "@tanstack/ai-mcp": "workspace:*",
     "@tanstack/react-router": "^1.170.41",

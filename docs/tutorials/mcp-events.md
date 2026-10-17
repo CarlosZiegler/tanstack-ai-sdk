@@ -17,7 +17,7 @@ An MCP server can push work to you: a new incident, a finished job. Polling that
 
 This tutorial subscribes to `incident.created` from a TanStack Start app. A POST route verifies the Standard Webhooks signature with `createMCPEventWebhook`. The page then shows the event.
 
-The sample app also hosts a small MCP Events server so you can emit a delivery without a live remote. Production apps subscribe to the real server over HTTP.
+The sample app also hosts a small in-process MCP Events server so you can emit a delivery without a live remote. Production apps subscribe to the real server over HTTP.
 
 The short guide is [MCP Events](../tools/mcp-events).
 
@@ -29,19 +29,19 @@ npx @tanstack/cli@latest create
 
 Pick React. For more options, see [Start getting started](https://tanstack.com/start/latest/docs/framework/react/quick-start).
 
-Then install these packages:
+Then install this package:
 
 <!-- ::start:tabs variant="package-manager" mode="install" -->
 
-react: @tanstack/ai-mcp @modelcontextprotocol/client @modelcontextprotocol/server
+react: @tanstack/ai-mcp
 
 <!-- ::end:tabs -->
 
-## The webhook, the server, and the page
+## The webhook, the helper, and the page
 
 The webhook route is the callback URL you pass to `subscribe`.
 
-The helper file keeps the store, the webhook handler, and a sample MCP Events server.
+The helper file keeps the store, the webhook handler, and a loopback MCP Events server.
 
 The page calls subscribe, then emit, and shows the verified event.
 
@@ -51,7 +51,7 @@ Create `src/routes/api.mcp-events.ts`.
 
 `createMCPEventWebhook` reads the raw body and checks the HMAC. Do not parse JSON and stringify it again.
 
-```ts
+```ts ignore
 import { createFileRoute } from '@tanstack/react-router'
 import { handleWebhook } from '../lib/desk'
 
@@ -59,23 +59,6 @@ export const Route = createFileRoute('/api/mcp-events')({
   server: {
     handlers: {
       POST: ({ request }) => handleWebhook(request),
-    },
-  },
-})
-```
-
-Mount the sample MCP server at `src/routes/api.mcp.ts` so a host can also call it over HTTP:
-
-```ts
-import { createFileRoute } from '@tanstack/react-router'
-import { handleMcp } from '../lib/desk'
-
-export const Route = createFileRoute('/api/mcp')({
-  server: {
-    handlers: {
-      GET: ({ request }) => handleMcp(request),
-      POST: ({ request }) => handleMcp(request),
-      DELETE: ({ request }) => handleMcp(request),
     },
   },
 })
@@ -91,7 +74,7 @@ That file does three jobs:
 - Host a small MCP Events server so you can click Emit without a remote.
 - Sign a Standard Webhooks body and pass it to `createMCPEventWebhook`.
 
-`subscribeDesk` uses `InMemoryTransport` so the page does not fetch itself. Use `allowInsecureLocalhost: true` only for `http://127.0.0.1` in local tests.
+`subscribeDesk` uses a loopback `Transport` so the page does not fetch itself. Use `allowInsecureLocalhost: true` only for `http://127.0.0.1` in local tests.
 
 `inMemoryMCPEventStore` is for this sample. Put a durable store in production.
 
@@ -114,7 +97,7 @@ Create `src/routes/index.tsx`.
 
 The page calls `subscribeDesk`, then `emitDesk`, and prints the last verified event.
 
-```tsx
+```tsx ignore
 import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
 import { emitDesk, subscribeDesk } from '@/lib/desk'
@@ -173,7 +156,7 @@ function McpEventsPage() {
         </button>
         <button
           type="button"
-          className="rounded bg-emerald-400 px-4 py-2 font-semibold text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white disabled:opacity-60"
+          className="rounded bg-emerald-400 px-4 py-2 font-semibold text-gray-900 focus-visible:outline focus-visible:outline-offset-2 focus-visible:outline-white disabled:opacity-60"
           disabled={pending !== '' || snapshot === null}
           onClick={() => {
             void onEmit()

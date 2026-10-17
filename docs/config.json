@@ -581,8 +581,7 @@
         {
           "label": "MCP Events",
           "to": "tools/mcp-events",
-          "addedAt": "2026-10-17",
-          "updatedAt": "2026-10-17"
+          "addedAt": "2026-10-17"
         },
         {
           "label": "MCP Apps",

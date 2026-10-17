@@ -1,9 +1,5 @@
-import {
-  McpServer,
-  ProtocolError,
-  createMcpHandler,
-} from '@modelcontextprotocol/server'
-import { createMCPClient, InMemoryTransport } from '@tanstack/ai-mcp'
+import { createMCPClient } from '@tanstack/ai-mcp'
+import type { Transport } from '@tanstack/ai-mcp'
 import {
   createMCPEventWebhook,
   inMemoryMCPEventStore,
@@ -13,15 +9,8 @@ import { createServerFn } from '@tanstack/react-start'
 
 const EVENTS_EXTENSION = 'io.modelcontextprotocol/events'
 
-const passThrough = {
-  '~standard': {
-    version: 1 as const,
-    vendor: 'mcp-events-example',
-    validate(value: unknown) {
-      return { value }
-    },
-  },
-}
+type RpcMessage = Parameters<NonNullable<Transport['onmessage']>>[0]
+type RpcRequest = Extract<RpcMessage, { method: string }>
 
 type StoredSub = {
   id: string
@@ -78,6 +67,27 @@ async function signWebhook(input: {
   return `v1,${btoa(binary)}`
 }
 
+const handshakeResult = {
+  protocolVersion: '2025-11-25',
+  capabilities: {
+    extensions: {
+      [EVENTS_EXTENSION]: {},
+    },
+  },
+  serverInfo: { name: 'desk-events', version: '1.0.0' },
+}
+
+const catalog = {
+  events: [
+    {
+      name: 'incident.created',
+      delivery: ['webhook'],
+      inputSchema: { type: 'object' },
+      payloadSchema: true,
+    },
+  ],
+}
+
 const subscriptions = new Map<string, StoredSub>()
 const received: Array<MCPEventOccurrence> = []
 const store = inMemoryMCPEventStore()
@@ -89,75 +99,86 @@ const webhook = createMCPEventWebhook({
   },
 })
 
-function attachEvents(server: McpServer['server']) {
-  server.setRequestHandler(
-    'events/list',
-    { params: passThrough },
-    async () => ({
-      events: [
-        {
-          name: 'incident.created',
-          delivery: ['webhook'],
-          inputSchema: { type: 'object' },
-          payloadSchema: true,
-        },
-      ],
-    }),
-  )
-
-  server.setRequestHandler(
-    'events/subscribe',
-    { params: passThrough },
-    async (params) => {
-      const body = isRecord(params) ? params : {}
-      const name = typeof body.name === 'string' ? body.name : ''
-      if (name !== 'incident.created') {
-        throw new ProtocolError(-32023, 'Event not found')
-      }
-      const delivery = isRecord(body.delivery) ? body.delivery : {}
-      const url = typeof delivery.url === 'string' ? delivery.url : ''
-      const secret = typeof delivery.secret === 'string' ? delivery.secret : ''
-      hmacKeyBytes(secret)
-      const id = 'sub_desk'
-      subscriptions.set(id, { id, name, url, secret })
-      return {
-        id,
-        refreshBefore: new Date(Date.now() + 3_600_000).toISOString(),
-        cursor: null,
-        truncated: false,
-      }
-    },
-  )
-
-  server.setRequestHandler(
-    'events/unsubscribe',
-    { params: passThrough },
-    async () => {
-      subscriptions.delete('sub_desk')
-      return {}
-    },
-  )
+function requestId(message: RpcRequest): string | number | undefined {
+  if (!('id' in message)) return undefined
+  return typeof message.id === 'string' || typeof message.id === 'number'
+    ? message.id
+    : undefined
 }
 
-function createServer() {
-  const mcp = new McpServer(
-    { name: 'desk-events', version: '1.0.0' },
-    {
-      capabilities: {
-        extensions: {
-          [EVENTS_EXTENSION]: {},
-        },
-      },
-    },
-  )
-  attachEvents(mcp.server)
-  return mcp
+function jsonRpcResult(
+  message: RpcRequest,
+  result: Record<string, unknown>,
+): RpcMessage | undefined {
+  const id = requestId(message)
+  if (id === undefined) return undefined
+  return { jsonrpc: '2.0', id, result }
 }
 
-const mcpFetch = createMcpHandler(createServer, { keepAliveMs: 0 }).fetch
+function jsonRpcError(
+  message: RpcRequest,
+  code: number,
+  errorMessage: string,
+): RpcMessage | undefined {
+  const id = requestId(message)
+  if (id === undefined) return undefined
+  return {
+    jsonrpc: '2.0',
+    id,
+    error: { code, message: errorMessage },
+  }
+}
 
-export function handleMcp(request: Request) {
-  return mcpFetch(request)
+function replyTo(message: RpcMessage): RpcMessage | undefined {
+  if (!('method' in message)) return undefined
+  const rpc: RpcRequest = message
+  if (rpc.method === 'initialize' || rpc.method === 'server/discover') {
+    return jsonRpcResult(rpc, handshakeResult)
+  }
+  if (rpc.method === 'notifications/initialized' || rpc.method === 'ping') {
+    return rpc.method === 'ping' ? jsonRpcResult(rpc, {}) : undefined
+  }
+  if (rpc.method === 'events/list') {
+    return jsonRpcResult(rpc, catalog)
+  }
+  if (rpc.method === 'events/subscribe') {
+    const params = isRecord(rpc.params) ? rpc.params : {}
+    const name = typeof params.name === 'string' ? params.name : ''
+    if (name !== 'incident.created') {
+      return jsonRpcError(rpc, -32023, 'Event not found')
+    }
+    const delivery = isRecord(params.delivery) ? params.delivery : {}
+    const url = typeof delivery.url === 'string' ? delivery.url : ''
+    const secret = typeof delivery.secret === 'string' ? delivery.secret : ''
+    hmacKeyBytes(secret)
+    const id = 'sub_desk'
+    subscriptions.set(id, { id, name, url, secret })
+    return jsonRpcResult(rpc, {
+      id,
+      refreshBefore: new Date(Date.now() + 3_600_000).toISOString(),
+      cursor: null,
+      truncated: false,
+    })
+  }
+  if (rpc.method === 'events/unsubscribe') {
+    subscriptions.delete('sub_desk')
+    return jsonRpcResult(rpc, {})
+  }
+  return jsonRpcError(rpc, -32601, 'Method not found')
+}
+
+function createDeskTransport(): Transport {
+  const transport: Transport = {
+    async start() {},
+    async close() {},
+    async send(message) {
+      const reply = replyTo(message)
+      if (reply !== undefined) {
+        transport.onmessage?.(reply)
+      }
+    },
+  }
+  return transport
 }
 
 export function handleWebhook(request: Request) {
@@ -168,10 +189,7 @@ async function signAndDeliver(sub: StoredSub, bodyObj: unknown) {
   const raw = new TextEncoder().encode(JSON.stringify(bodyObj))
   const timestamp = Math.floor(Date.now() / 1000)
   const messageId =
-    typeof bodyObj === 'object' &&
-    bodyObj !== null &&
-    'eventId' in bodyObj &&
-    typeof bodyObj.eventId === 'string'
+    isRecord(bodyObj) && typeof bodyObj.eventId === 'string'
       ? bodyObj.eventId
       : `msg_${crypto.randomUUID()}`
   const signature = await signWebhook({
@@ -202,12 +220,8 @@ export type DeskSnapshot = {
 
 export const subscribeDesk = createServerFn({ method: 'POST' }).handler(
   async (): Promise<DeskSnapshot> => {
-    const mcp = createServer()
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair()
-    await mcp.server.connect(serverTransport)
     const client = await createMCPClient({
-      transport: clientTransport,
+      transport: createDeskTransport(),
       experimental_events: { store },
     })
     try {
