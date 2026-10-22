@@ -35,6 +35,8 @@ export type {
   ToolsOptions,
 } from './types'
 export type {
+  DiscoverResult,
+  PriorDiscovery,
   Tool as McpTool,
   ToolAnnotations,
 } from '@modelcontextprotocol/client'
