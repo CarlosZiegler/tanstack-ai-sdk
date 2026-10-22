@@ -2,12 +2,12 @@ import { createMCPClient } from '@tanstack/ai-mcp'
 import type { Transport } from '@tanstack/ai-mcp'
 import {
   createMCPEventWebhook,
+  MCP_EVENTS_EXTENSION,
   inMemoryMCPEventStore,
+  signMCPEventPayload,
 } from '@tanstack/ai-mcp/events'
 import type { MCPEventOccurrence } from '@tanstack/ai-mcp/events'
 import { createServerFn } from '@tanstack/react-start'
-
-const EVENTS_EXTENSION = 'io.modelcontextprotocol/events'
 
 type RpcMessage = Parameters<NonNullable<Transport['onmessage']>>[0]
 type RpcRequest = Extract<RpcMessage, { method: string }>
@@ -23,55 +23,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function hmacKeyBytes(secret: string): Uint8Array {
-  if (!secret.startsWith('whsec_')) {
-    throw new Error('Webhook secret must start with whsec_')
-  }
-  const encoded = secret.slice('whsec_'.length)
-  const padded = encoded + '='.repeat((4 - (encoded.length % 4)) % 4)
-  const binary = atob(padded)
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
-  return bytes
-}
-
-async function signWebhook(input: {
-  secret: string
-  messageId: string
-  timestamp: number
-  body: Uint8Array
-}): Promise<string> {
-  const keyBytes = hmacKeyBytes(input.secret)
-  const keyBuffer = new ArrayBuffer(keyBytes.byteLength)
-  new Uint8Array(keyBuffer).set(keyBytes)
-  const key = await crypto.subtle.importKey(
-    'raw',
-    keyBuffer,
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign'],
-  )
-  const prefix = new TextEncoder().encode(
-    `${input.messageId}.${input.timestamp}.`,
-  )
-  const payload = new Uint8Array(prefix.byteLength + input.body.byteLength)
-  payload.set(prefix)
-  payload.set(input.body, prefix.byteLength)
-  const payloadBuffer = new ArrayBuffer(payload.byteLength)
-  new Uint8Array(payloadBuffer).set(payload)
-  const signature = await crypto.subtle.sign('HMAC', key, payloadBuffer)
-  let binary = ''
-  for (const byte of new Uint8Array(signature)) {
-    binary += String.fromCharCode(byte)
-  }
-  return `v1,${btoa(binary)}`
-}
-
 const handshakeResult = {
   protocolVersion: '2025-11-25',
   capabilities: {
     extensions: {
-      [EVENTS_EXTENSION]: {},
+      [MCP_EVENTS_EXTENSION]: {},
     },
   },
   serverInfo: { name: 'desk-events', version: '1.0.0' },
@@ -97,6 +53,7 @@ const webhook = createMCPEventWebhook({
   onEvent: ({ event }) => {
     received.push(event)
   },
+  onError: (error) => console.error(error),
 })
 
 function requestId(message: RpcRequest): string | number | undefined {
@@ -135,9 +92,8 @@ function replyTo(message: RpcMessage): RpcMessage | undefined {
   if (rpc.method === 'initialize' || rpc.method === 'server/discover') {
     return jsonRpcResult(rpc, handshakeResult)
   }
-  if (rpc.method === 'notifications/initialized' || rpc.method === 'ping') {
-    return rpc.method === 'ping' ? jsonRpcResult(rpc, {}) : undefined
-  }
+  if (rpc.method === 'ping') return jsonRpcResult(rpc, {})
+  if (rpc.method === 'notifications/initialized') return undefined
   if (rpc.method === 'events/list') {
     return jsonRpcResult(rpc, catalog)
   }
@@ -148,9 +104,10 @@ function replyTo(message: RpcMessage): RpcMessage | undefined {
       return jsonRpcError(rpc, -32023, 'Event not found')
     }
     const delivery = isRecord(params.delivery) ? params.delivery : {}
-    const url = typeof delivery.url === 'string' ? delivery.url : ''
-    const secret = typeof delivery.secret === 'string' ? delivery.secret : ''
-    hmacKeyBytes(secret)
+    const { url, secret } = delivery
+    if (typeof url !== 'string' || typeof secret !== 'string') {
+      return jsonRpcError(rpc, -32602, 'delivery.url and secret are required')
+    }
     const id = 'sub_desk'
     subscriptions.set(id, { id, name, url, secret })
     return jsonRpcResult(rpc, {
@@ -192,13 +149,13 @@ async function signAndDeliver(sub: StoredSub, bodyObj: unknown) {
     isRecord(bodyObj) && typeof bodyObj.eventId === 'string'
       ? bodyObj.eventId
       : `msg_${crypto.randomUUID()}`
-  const signature = await signWebhook({
+  const signature = await signMCPEventPayload({
     secret: sub.secret,
     messageId,
     timestamp,
     body: raw,
   })
-  await webhook(
+  const res = await webhook(
     new Request(sub.url, {
       method: 'POST',
       headers: {
@@ -206,10 +163,12 @@ async function signAndDeliver(sub: StoredSub, bodyObj: unknown) {
         'webhook-id': messageId,
         'webhook-timestamp': String(timestamp),
         'webhook-signature': signature,
+        'x-mcp-subscription-id': sub.id,
       },
       body: raw,
     }),
   )
+  if (!res.ok) throw new Error(`Webhook rejected the delivery: ${res.status}`)
 }
 
 export type DeskSnapshot = {

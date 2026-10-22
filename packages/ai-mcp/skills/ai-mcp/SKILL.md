@@ -19,7 +19,6 @@ sources:
   - 'TanStack/ai:packages/ai-mcp/src/server/create-server.ts'
   - 'TanStack/ai:packages/ai-mcp/src/server/stdio.ts'
   - 'TanStack/ai:packages/ai-mcp/src/events/index.ts'
-  - 'TanStack/ai:docs/tools/mcp-events.md'
 ---
 
 # `@tanstack/ai-mcp`
@@ -1199,12 +1198,11 @@ Gotchas:
 - The SDK does not auto-renew. Call `refresh({ key })` from a cron over `store.list?.()`.
 - Dedupe deliveries on `messageId`. A 503 after `onEvent` succeeded is retried.
 
-Capability check: `extensions["io.modelcontextprotocol/events"]`, then
-`experimental.events`, then top-level `events` from the raw handshake
-(SDK 2.1.0 strips that key). HTTP/SSE transports add `Mcp-Name` for
+Capability check: `extensions["io.modelcontextprotocol/events"]` only.
+With `experimental_events` set, HTTP/SSE transports add `Mcp-Name` for
 `events/subscribe` and `events/unsubscribe` (Base64 sentinel when the
-name is not printable ASCII). OpenAI `-32015` with a known
-`data.reason` maps to `kind: 'callback-endpoint'` (SEP uses `-32027`).
+name is not printable ASCII). A failed subscribe deletes its `pending`
+record. Deliveries must send `X-MCP-Subscription-Id`.
 
 ## Error classes
 

@@ -1,20 +1,12 @@
 import { describe, expect, it } from 'vitest'
+import type { StandardSchemaV1Sync } from '@modelcontextprotocol/client'
 import {
   classifyWebhookBody,
   listEventsResult,
   subscribeResult,
 } from '../../src/events/wire'
 
-function parse<T>(
-  schema: {
-    '~standard': {
-      validate: (
-        value: unknown,
-      ) => { value: T } | { issues: Array<{ message: string }> }
-    }
-  },
-  value: unknown,
-) {
+function parse<T>(schema: StandardSchemaV1Sync<unknown, T>, value: unknown) {
   return schema['~standard'].validate(value)
 }
 

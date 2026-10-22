@@ -5,6 +5,7 @@ import {
 } from '@tanstack/ai-mcp/events'
 import type { MCPClient } from '@tanstack/ai-mcp'
 import type { MCPEvents, MCPEventOccurrence } from '@tanstack/ai-mcp/events'
+// One SEP-3415 test server, shared with the ai-mcp unit tests on purpose.
 import {
   createTestEventsServer,
   eventsHttpFetch,
@@ -20,16 +21,18 @@ type Session = {
   received: Array<MCPEventOccurrence>
   gaps: Array<{ cursor: string }>
   terminations: Array<{ code: number; message: string }>
+  errors: Array<string>
   client?: EventsClient
 }
 
 const sessions = new Map<string, Session>()
 
-function createSession(): Session {
+function createSession(origin: string): Session {
   const store = inMemoryMCPEventStore()
   const received: Array<MCPEventOccurrence> = []
   const gaps: Array<{ cursor: string }> = []
   const terminations: Array<{ code: number; message: string }> = []
+  const errors: Array<string> = []
   const webhook = createMCPEventWebhook({
     store,
     onEvent: ({ event }) => {
@@ -44,13 +47,22 @@ function createSession(): Session {
         message: termination.message,
       })
     },
+    onError: (error) => {
+      errors.push(`${error.stage}: ${error.message}`)
+    },
   })
   const events = createTestEventsServer({
-    // Vite's e2e server binds `localhost` (often IPv6-only). The client
-    // rejects `localhost` as an http callback host, so subscribe uses
-    // 127.0.0.1 and deliveries run in-process through the same handler
-    // the HTTP route uses. Package e2e covers signed webhooks over TCP.
-    deliver: (request) => webhook(request),
+    // The client only accepts a 127.0.0.1 http callback, but Vite may bind
+    // `localhost` to IPv6 only. Post to the same path on the app origin so
+    // each delivery goes over HTTP through the webhook route.
+    deliver: async (request) => {
+      const url = new URL(request.url)
+      return fetch(`${origin}${url.pathname}${url.search}`, {
+        method: 'POST',
+        headers: request.headers,
+        body: await request.arrayBuffer(),
+      })
+    },
     allowHttpLoopback: true,
     verify: 'challenge',
     ttlMs: { default: 60_000, min: 1 },
@@ -64,13 +76,14 @@ function createSession(): Session {
     received,
     gaps,
     terminations,
+    errors,
   }
 }
 
-export function getMcpEventsSession(id: string): Session {
+export function getMcpEventsSession(id: string, origin: string): Session {
   const existing = sessions.get(id)
   if (existing) return existing
-  const created = createSession()
+  const created = createSession(origin)
   sessions.set(id, created)
   return created
 }

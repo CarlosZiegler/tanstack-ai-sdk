@@ -15,7 +15,10 @@ export const Route = createFileRoute('/api/mcp-events-webhook')({
             { status: 400 },
           )
         }
-        return getMcpEventsSession(sessionId).webhook(request)
+        return getMcpEventsSession(
+          sessionId,
+          new URL(request.url).origin,
+        ).webhook(request)
       },
     },
   },

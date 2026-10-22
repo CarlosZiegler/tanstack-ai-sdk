@@ -39,6 +39,7 @@ test.describe('mcp events — webhook subscribe and delivery', () => {
     const events = received.events
     expect(Array.isArray(events)).toBe(true)
     expect(JSON.stringify(events)).toContain('inc_e2e')
+    expect(received.errors).toEqual([])
   })
 
   test('gap is reported through onGap', async ({ request, testId }) => {
@@ -64,13 +65,16 @@ test.describe('mcp events — webhook subscribe and delivery', () => {
     await control(request, { testId, op: 'reset' })
     const sub = await control(request, { testId, op: 'subscribe' })
     const key = typeof sub.key === 'string' ? sub.key : ''
+    await control(request, { testId, op: 'emit', data: { id: 'before-unsub' } })
     await control(request, { testId, op: 'unsubscribe', key })
-    await control(request, {
+    const after = await control(request, {
       testId,
       op: 'emit',
       data: { id: 'after-unsub' },
     })
+    expect(after.result).toEqual([])
     const received = await control(request, { testId, op: 'received' })
+    expect(JSON.stringify(received.events)).toContain('before-unsub')
     expect(JSON.stringify(received.events)).not.toContain('after-unsub')
   })
 })

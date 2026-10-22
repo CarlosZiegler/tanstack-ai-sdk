@@ -382,13 +382,14 @@ describe('createMCPEventWebhook', () => {
 
   it('returns 503 for an event while the record is pending', async () => {
     const record = sampleRecord({ id: undefined, status: 'pending' })
-    const { webhook } = await setup(record)
+    const { webhook, errors } = await setup(record)
     const request = await signedRequest({
       record,
       body: eventBody(),
       timestamp: FIXED_TS,
     })
     expect((await webhook(request)).status).toBe(503)
+    expect(errors.at(-1)?.stage).toBe('routing')
   })
 
   it('returns 503 for a gap while pending', async () => {
@@ -458,7 +459,7 @@ describe('createMCPEventWebhook', () => {
 
   it('returns 410 for an event after refreshBefore', async () => {
     const record = sampleRecord({ refreshBefore: '2020-01-01T00:00:00Z' })
-    const { webhook, onEvent } = await setup(record)
+    const { webhook, onEvent, errors } = await setup(record)
     const request = await signedRequest({
       record,
       body: eventBody(),
@@ -466,6 +467,22 @@ describe('createMCPEventWebhook', () => {
     })
     expect((await webhook(request)).status).toBe(410)
     expect(onEvent).not.toHaveBeenCalled()
+    expect(errors.at(-1)?.stage).toBe('routing')
+  })
+
+  it('returns 503 with stage store when the stored secret is invalid', async () => {
+    const record = sampleRecord()
+    const { webhook, errors } = await setup({
+      ...record,
+      delivery: { ...record.delivery, secret: 'not-a-secret' },
+    })
+    const request = await signedRequest({
+      record,
+      body: eventBody(),
+      timestamp: FIXED_TS,
+    })
+    expect((await webhook(request)).status).toBe(503)
+    expect(errors.at(-1)?.stage).toBe('store')
   })
 
   it('returns 400 when event.name differs from the subscription', async () => {

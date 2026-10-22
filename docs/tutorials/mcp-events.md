@@ -204,7 +204,7 @@ export const Route = createFileRoute('/')({
 ## 5. Run the app
 
 1. In the app folder, run `pnpm dev`.
-2. Open http://127.0.0.1:3100.
+2. Open http://127.0.0.1:3101.
 3. Click Subscribe, then Emit incident.
 
 The page shows `incident.created`, a subscription id, and the verified payload with `id: "inc_desk"`.

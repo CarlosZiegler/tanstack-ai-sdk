@@ -14,6 +14,6 @@ for (const name of ['.env.local', '.env']) {
 
 export default defineConfig({
   resolve: { tsconfigPaths: true },
-  server: { port: 3100, host: '127.0.0.1' },
+  server: { port: 3101, host: '127.0.0.1' },
   plugins: [tailwindcss(), tanstackStart(), viteReact()],
 })

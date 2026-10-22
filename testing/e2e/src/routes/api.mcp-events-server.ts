@@ -12,7 +12,9 @@ async function handle(request: Request): Promise<Response> {
       { status: 400 },
     )
   }
-  return getMcpEventsSession(sessionId).mcpFetch(request)
+  return getMcpEventsSession(sessionId, new URL(request.url).origin).mcpFetch(
+    request,
+  )
 }
 
 export const Route = createFileRoute('/api/mcp-events-server')({

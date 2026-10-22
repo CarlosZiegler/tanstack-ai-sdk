@@ -23,35 +23,19 @@ describe('toMCPEventRequestError', () => {
     })
   })
 
-  it('maps OpenAI -32015 with a known reason to callback-endpoint', () => {
-    const err = toMCPEventRequestError(
-      new ProtocolError(-32015, 'callback failed', {
-        reason: 'challenge_failed',
-      }),
-    )
+  it.each([
+    [-32602, 'invalid-params'],
+    [-32023, 'not-found'],
+    [-32024, 'forbidden'],
+    [-32025, 'resource-exhausted'],
+    [-32026, 'unsupported'],
+    [-32027, 'callback-endpoint'],
+    [-32015, 'unknown'],
+    [-32011, 'unknown'],
+  ] as const)('maps %i to kind %s', (code, kind) => {
+    const err = toMCPEventRequestError(new ProtocolError(code, 'failed'))
     expect(err).toBeInstanceOf(MCPEventRequestError)
-    expect(err).toMatchObject({
-      code: -32015,
-      kind: 'callback-endpoint',
-      reason: 'challenge_failed',
-    })
-  })
-
-  it('keeps -32015 as unknown when the reason is missing or not in the OpenAI set', () => {
-    const missing = toMCPEventRequestError(
-      new ProtocolError(-32015, 'callback failed'),
-    )
-    expect(missing).toMatchObject({ kind: 'unknown', code: -32015 })
-    const other = toMCPEventRequestError(
-      new ProtocolError(-32015, 'callback failed', { reason: 'nope' }),
-    )
-    expect(other).toMatchObject({ kind: 'unknown', code: -32015 })
-  })
-
-  it('maps -32011 to kind unknown with the raw code', () => {
-    const err = toMCPEventRequestError(new ProtocolError(-32011, 'old code'))
-    expect(err).toBeInstanceOf(MCPEventRequestError)
-    expect(err).toMatchObject({ kind: 'unknown', code: -32011 })
+    expect(err).toMatchObject({ code, kind })
   })
 
   it('passes a non-ProtocolError through', () => {

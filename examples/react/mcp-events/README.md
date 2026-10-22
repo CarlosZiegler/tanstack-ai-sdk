@@ -12,7 +12,7 @@ a real MCP server over HTTP.
 
 1. From the repo root, run `pnpm install`.
 2. Run `pnpm --filter mcp-events dev`.
-3. Open http://127.0.0.1:3100.
+3. Open http://127.0.0.1:3101.
 4. Click Subscribe, then Emit incident.
 
 The page shows the catalog, the subscription id, and the verified event.

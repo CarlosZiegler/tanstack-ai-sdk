@@ -79,7 +79,7 @@ export const Route = createFileRoute('/api/mcp-events-control')({
           await resetMcpEventsSession(testId)
           return Response.json({ ok: true })
         }
-        const session = getMcpEventsSession(testId)
+        const session = getMcpEventsSession(testId, origin)
         if (op === 'subscribe') {
           const client = await mcpEventsClient(session, origin, testId)
           const sub = await client.experimental_events.subscribe({
@@ -137,6 +137,7 @@ export const Route = createFileRoute('/api/mcp-events-control')({
             events: session.received,
             gaps: session.gaps,
             terminations: session.terminations,
+            errors: session.errors,
             subscriptions: session.events
               .subscriptions()
               .map((item) => item.id),

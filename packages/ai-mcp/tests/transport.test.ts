@@ -80,16 +80,29 @@ describe('resolveTransport', () => {
     ).rejects.toThrow(/@tanstack\/ai-mcp\/stdio/)
   })
 
-  it('sets Mcp-Name for events/subscribe over http transport', async () => {
-    const seen: Array<Request> = []
+  it('leaves fetch untouched when events are off', async () => {
+    const fetchImpl: typeof fetch = async () => new Response('{}')
     const t = await resolveTransport({
       type: 'http',
       url: 'https://example.com/mcp',
-      fetch: async (input, init) => {
-        seen.push(new Request(input, init))
-        return new Response('{}')
-      },
+      fetch: fetchImpl,
     })
+    expect(Reflect.get(t, '_fetch')).toBe(fetchImpl)
+  })
+
+  it('sets Mcp-Name for events/subscribe over http transport', async () => {
+    const seen: Array<Request> = []
+    const t = await resolveTransport(
+      {
+        type: 'http',
+        url: 'https://example.com/mcp',
+        fetch: async (input, init) => {
+          seen.push(new Request(input, init))
+          return new Response('{}')
+        },
+      },
+      { events: true },
+    )
     const wrapped = Reflect.get(t, '_fetch') as typeof fetch
     await wrapped('https://example.com/mcp', {
       method: 'POST',
@@ -108,14 +121,17 @@ describe('resolveTransport', () => {
     const names = ['événement.créé', '事件']
     for (const name of names) {
       const seen: Array<Request> = []
-      const t = await resolveTransport({
-        type: 'http',
-        url: 'https://example.com/mcp',
-        fetch: async (input, init) => {
-          seen.push(new Request(input, init))
-          return new Response('{}')
+      const t = await resolveTransport(
+        {
+          type: 'http',
+          url: 'https://example.com/mcp',
+          fetch: async (input, init) => {
+            seen.push(new Request(input, init))
+            return new Response('{}')
+          },
         },
-      })
+        { events: true },
+      )
       const wrapped = Reflect.get(t, '_fetch') as typeof fetch
       await wrapped('https://example.com/mcp', {
         method: 'POST',

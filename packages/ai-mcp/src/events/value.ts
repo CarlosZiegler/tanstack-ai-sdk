@@ -4,6 +4,7 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+/** For values from `JSON.parse` or a JSON-RPC result, which hold only JSON. */
 export function isJsonObject(value: unknown): value is JSONObject {
   return isRecord(value)
 }

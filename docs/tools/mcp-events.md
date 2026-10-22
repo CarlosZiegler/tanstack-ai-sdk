@@ -66,15 +66,7 @@ const events = await mcp.experimental_events.list()
 
 `list()` works without a store. `subscribe` throws until you pass `{ store }` or `{ adapter }`.
 
-The client sends `events/*` only when the server advertised Events:
-
-1. `capabilities.extensions["io.modelcontextprotocol/events"]` (SEP-3415)
-2. or `capabilities.experimental.events` (example servers)
-3. or top-level `capabilities.events` (OpenAI ChatGPT / WG sketch)
-
-SDK 2.1.0 `getServerCapabilities()` drops the top-level `events` key. The client reads that key from the raw `initialize` / `server/discover` result.
-
-Otherwise it throws `MCPEventsUnsupportedError`.
+The client sends `events/*` only when the server declares `capabilities.extensions["io.modelcontextprotocol/events"]` (SEP-3415). Otherwise it throws `MCPEventsUnsupportedError`.
 
 ## Subscribe (direct)
 
@@ -106,10 +98,11 @@ const sub = await mcp.experimental_events.subscribe({
 
 What subscribe does:
 
-1. Writes a `pending` record before it calls the server.
-2. Appends `mcp_event_subscription=<key>` to the callback URL.
-3. Generates a `whsec_` secret if you did not pass one.
-4. Stores `id`, `refreshBefore`, `cursor`, and `truncated` when the server answers.
+1. Calls `events/list` and throws `MCPUnknownEventError` if the event is missing or has no webhook delivery.
+2. Writes a `pending` record before it calls `events/subscribe`.
+3. Appends `mcp_event_subscription=<key>` to the callback URL.
+4. Generates a `whsec_` secret if you did not pass one.
+5. Stores `id`, `refreshBefore`, `cursor`, and `truncated` when the server answers. If the server call fails, it deletes the `pending` record.
 
 Pass `allowInsecureLocalhost: true` only for `http://127.0.0.1` or `http://[::1]` in local tests.
 
@@ -121,7 +114,7 @@ await mcp.experimental_events.refresh({ key: sub.key })
 
 Unsubscribe sends `{ mode: 'webhook', url }` and deletes the local record. If the server returns NotFound, the local record is still deleted.
 
-`MCPEventRequestError.kind` is `callback-endpoint` for SEP `-32027`. OpenAI servers may send `-32015` with `data.reason` in `connection_refused`, `timeout`, `tls_error`, `http_4xx`, `http_5xx`, or `challenge_failed`. The client maps that alias the same way. Any other `-32015` stays `kind: 'unknown'`.
+`MCPEventRequestError.kind` is `callback-endpoint` for SEP `-32027`. A code the SEP does not define gives `kind: 'unknown'`.
 
 ## Receive webhooks
 
@@ -191,7 +184,7 @@ const webhook = createMCPEventWebhook({
 
 app.post(
   '/api/mcp-events',
-  express.raw({ type: 'application/json' }),
+  express.raw({ type: 'application/json', limit: '256kb' }),
   async (req, res) => {
     const headers = new Headers()
     for (const [key, value] of Object.entries(req.headers)) {
@@ -214,16 +207,21 @@ app.post(
 
 ## Receiver status codes
 
+Each delivery must send these headers: `webhook-id`, `webhook-timestamp`, `webhook-signature`, and `X-MCP-Subscription-Id`.
+
 | Status | When |
 |---|---|
-| 204 | Event, gap, terminated, or verification challenge succeeded |
-| 401 | Missing route key, bad signature, or timestamp outside ±300s |
-| 400 | Body is not JSON or the envelope is invalid |
-| 410 | Subscription is gone or the lease expired |
+| 200 | Verification challenge. The body is `{ "challenge": "..." }` |
+| 204 | Event, gap, or terminated succeeded |
+| 400 | Body is not JSON, the envelope is invalid, or the payload was rejected |
+| 401 | A required header is missing, the route key is missing or unknown, the subscription id does not match, the signature is bad, or the timestamp is more than 300 seconds off |
+| 405 | Method is not `POST` |
+| 410 | The lease expired |
 | 413 | Body larger than 256 KiB |
-| 503 | `onEvent` / `onGap` / `onTerminated` or the store threw |
+| 415 | Content type is not `application/json` |
+| 503 | The record is still `pending`, the stored secret is invalid, or `onEvent` / `onGap` / `onTerminated` / the store threw |
 
-Return 503 so the server retries. Dedupe in your app on `(subscription.id, messageId)`.
+Every status except 200 and 204 calls `onError`. A 503 tells the server to retry, so dedupe in your app on `(subscription.id, messageId)`.
 
 ## Renew leases
 
@@ -378,11 +376,11 @@ Treat that snippet as a sketch. Production delivery needs a durable store, retri
 
 | Symptom | Check |
 |---|---|
-| `MCPEventsUnsupportedError` | The server did not advertise `extensions`, `experimental.events`, or `events` |
+| `MCPEventsUnsupportedError` | The server did not declare `extensions["io.modelcontextprotocol/events"]` |
 | 401 on every delivery | Middleware parsed the body. Use the raw bytes |
 | 401 without a query string | A proxy dropped `mcp_event_subscription` |
 | Duplicate `onEvent` calls | Dedupe on `messageId`. 503 after a store failure retries |
-| Subscribe times out | The pending record stays. Call `refresh({ key })` |
-| `Mcp-Name` missing | HTTP and SSE transports wrap `fetch` for `events/subscribe` and `events/unsubscribe`. Non-ASCII names use `=?base64?…?=` |
+| Subscribe times out | The client deletes the pending record. Call `subscribe` again |
+| `Mcp-Name` missing | With `experimental_events` set, HTTP and SSE transports add it to `events/subscribe` and `events/unsubscribe`. Non-ASCII names use `=?base64?...?=` |
 
 Next: follow [Subscribe to MCP Events](../tutorials/mcp-events), or put `createMCPEventWebhook` on a POST route and subscribe with `{ store }`.

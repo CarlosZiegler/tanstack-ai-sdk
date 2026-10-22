@@ -1,7 +1,8 @@
 export { createMCPEventWebhook } from './webhook'
 export { inMemoryMCPEventStore } from './memory-store'
 export { createMCPEventSecret } from './secret'
-export { MCP_EVENTS_EXTENSION, SEP_REVISION } from './capability'
+export { MCP_EVENTS_EXTENSION } from './capability'
+export { signMCPEventPayload } from './signature'
 export { MCPEventWebhookError } from './types'
 export type {
   DirectMCPEventsOptions,
@@ -20,7 +21,6 @@ export type {
   MCPEventOccurrence,
   MCPEventOperations,
   MCPEvents,
-  MCPEventsContext,
   MCPEventsOptions,
   MCPEventStore,
   MCPEventSubscribeResult,

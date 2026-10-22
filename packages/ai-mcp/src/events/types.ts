@@ -1,16 +1,6 @@
-/** JSON value used in event arguments and payloads. */
-export type JSONValue =
-  | string
-  | number
-  | boolean
-  | null
-  | JSONObject
-  | Array<JSONValue>
+import type { JSONObject, StandardSchemaV1 } from '@modelcontextprotocol/client'
 
-/** JSON object sent as event arguments or payload data. */
-export interface JSONObject {
-  [key: string]: JSONValue
-}
+export type { JSONObject, JSONValue } from '@modelcontextprotocol/client'
 
 /**
  * Delivery modes an event type may advertise.
@@ -154,7 +144,7 @@ export interface DirectMCPEventsOptions {
   store: MCPEventStore
   adapter?: never
   /**
-   * Called before every subscribe. Throw to reject.
+   * Called on each `subscribe()` call, not on `refresh()`. Throw to reject.
    * The SDK does not validate against `inputSchema`.
    *
    * @example
@@ -265,7 +255,7 @@ export interface MCPEventAdapter {
 }
 
 /**
- * Managed mode: subscribe and list go through the adapter.
+ * Managed mode: subscribe goes through the adapter. `list` still uses MCP.
  *
  * @experimental
  */
@@ -354,29 +344,17 @@ export interface ManagedMCPEvents extends MCPEventOperations {
   }) => Promise<Array<MCPEventDefinition>>
 }
 
-/** Minimal Standard Schema used for MCP `events/*` results. */
-export interface MCPStandardSchema<T> {
-  readonly '~standard': {
-    readonly version: 1
-    readonly vendor: string
-    validate: (
-      value: unknown,
-    ) => { value: T } | { issues: Array<{ message: string }> }
-  }
-}
-
 /**
- * The only seam between `client.ts` and `events/*`.
- *
- * @experimental
+ * What `client.ts` hands to the `events/*` modules. Internal.
  */
 export interface MCPEventsContext {
-  request: (
+  /** Sends one `events/*` request. The SDK validates the result with `schema`. */
+  request: <T>(
     method: 'events/list' | 'events/subscribe' | 'events/unsubscribe',
     params: Record<string, unknown>,
-    schema: MCPStandardSchema<unknown>,
+    schema: StandardSchemaV1<unknown, T>,
     signal?: AbortSignal,
-  ) => Promise<unknown>
+  ) => Promise<T>
   assertOpen: () => void
   readonly supportsEvents: boolean
   readonly transport: MCPEventAdapterTransport

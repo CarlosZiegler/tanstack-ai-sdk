@@ -1,8 +1,10 @@
+import { MCPEventConfigError } from '../errors'
 import { MCPEventWebhookError } from './types'
 import type {
   MCPEventSubscription,
   MCPEventSubscriptionInfo,
   MCPEventWebhookOptions,
+  MCPEventWebhookStage,
 } from './types'
 import { readCallbackKey } from './callback-url'
 import { verifyMCPEventSignature } from './signature'
@@ -58,10 +60,10 @@ function report(
   }
 }
 
-class BodyTooLarge extends Error {
+class BodyTooLargeError extends Error {
   constructor() {
     super('Webhook body exceeds the maximum size')
-    this.name = 'BodyTooLarge'
+    this.name = 'BodyTooLargeError'
   }
 }
 
@@ -79,7 +81,7 @@ async function readBoundedBody(
     total += value.byteLength
     if (total > maxBytes) {
       await reader.cancel().catch(() => undefined)
-      throw new BodyTooLarge()
+      throw new BodyTooLargeError()
     }
     chunks.push(value)
   }
@@ -123,26 +125,32 @@ export function createMCPEventWebhook(
   const now = options.now ?? Date.now
 
   return async (request) => {
+    const key = readCallbackKey(request.url)
+    const fail = (
+      status: number,
+      stage: MCPEventWebhookStage,
+      message: string,
+      cause?: unknown,
+    ) => {
+      report(
+        options.onError,
+        new MCPEventWebhookError(stage, message, {
+          subscriptionKey: key,
+          cause,
+        }),
+      )
+      return empty(status)
+    }
+
     if (request.method !== 'POST') {
       return empty(405, { Allow: 'POST' })
     }
     if (!isJsonMediaType(request.headers.get('content-type'))) {
-      report(
-        options.onError,
-        new MCPEventWebhookError('headers', 'Unsupported media type'),
-      )
-      return empty(415)
+      return fail(415, 'headers', 'Unsupported media type')
     }
-    const contentLength = request.headers.get('content-length')
-    if (contentLength !== null) {
-      const size = Number(contentLength)
-      if (Number.isFinite(size) && size > maxBodyBytes) {
-        report(
-          options.onError,
-          new MCPEventWebhookError('body', 'Webhook body is too large'),
-        )
-        return empty(413)
-      }
+    const contentLength = Number(request.headers.get('content-length'))
+    if (Number.isFinite(contentLength) && contentLength > maxBodyBytes) {
+      return fail(413, 'body', 'Webhook body is too large')
     }
 
     const webhookId = header(request, 'webhook-id')
@@ -155,103 +163,47 @@ export function createMCPEventWebhook(
       webhookSignature === null ||
       subscriptionId === null
     ) {
-      report(
-        options.onError,
-        new MCPEventWebhookError('headers', 'Missing webhook headers'),
-      )
-      return empty(401)
+      return fail(401, 'headers', 'Missing webhook headers')
     }
 
-    const key = readCallbackKey(request.url)
     if (key === undefined) {
-      report(
-        options.onError,
-        new MCPEventWebhookError('routing', 'Missing subscription key'),
-      )
-      return empty(401)
+      return fail(401, 'routing', 'Missing subscription key')
     }
     let record: MCPEventSubscription | undefined
     try {
       record = await options.store.get(key)
     } catch (cause) {
-      report(
-        options.onError,
-        new MCPEventWebhookError('store', 'Subscription lookup failed', {
-          subscriptionKey: key,
-          cause,
-        }),
-      )
-      return empty(503)
+      return fail(503, 'store', 'Subscription lookup failed', cause)
     }
     if (record === undefined) {
-      report(
-        options.onError,
-        new MCPEventWebhookError('routing', 'Unknown subscription key', {
-          subscriptionKey: key,
-        }),
-      )
-      return empty(401)
+      return fail(401, 'routing', 'Unknown subscription key')
     }
     if (record.id !== undefined && record.id !== subscriptionId) {
-      report(
-        options.onError,
-        new MCPEventWebhookError('routing', 'Subscription id mismatch', {
-          subscriptionKey: key,
-        }),
-      )
-      return empty(401)
+      return fail(401, 'routing', 'Subscription id mismatch')
     }
 
     if (!/^-?\d+$/.test(webhookTimestamp)) {
-      report(
-        options.onError,
-        new MCPEventWebhookError('timestamp', 'Invalid webhook timestamp', {
-          subscriptionKey: key,
-        }),
-      )
-      return empty(401)
+      return fail(401, 'timestamp', 'Invalid webhook timestamp')
     }
     const timestamp = Number(webhookTimestamp)
-    const nowSec = Math.floor(now() / 1000)
-    if (Math.abs(nowSec - timestamp) > tolerance) {
-      report(
-        options.onError,
-        new MCPEventWebhookError(
-          'timestamp',
-          'Webhook timestamp is outside the tolerance window',
-          {
-            subscriptionKey: key,
-          },
-        ),
+    if (Math.abs(Math.floor(now() / 1000) - timestamp) > tolerance) {
+      return fail(
+        401,
+        'timestamp',
+        'Webhook timestamp is outside the tolerance window',
       )
-      return empty(401)
     }
 
     let body: Uint8Array
     try {
       body = await readBoundedBody(request, maxBodyBytes)
     } catch (cause) {
-      if (cause instanceof BodyTooLarge) {
-        report(
-          options.onError,
-          new MCPEventWebhookError('body', 'Webhook body is too large', {
-            subscriptionKey: key,
-            cause,
-          }),
-        )
-        return empty(413)
-      }
-      report(
-        options.onError,
-        new MCPEventWebhookError('body', 'Failed to read webhook body', {
-          subscriptionKey: key,
-          cause,
-        }),
-      )
-      return empty(503)
+      return cause instanceof BodyTooLargeError
+        ? fail(413, 'body', 'Webhook body is too large', cause)
+        : fail(503, 'body', 'Failed to read webhook body', cause)
     }
 
-    let verified = false
+    let verified: boolean
     try {
       verified = await verifyMCPEventSignature({
         secret: record.delivery.secret,
@@ -261,63 +213,36 @@ export function createMCPEventWebhook(
         header: webhookSignature,
       })
     } catch (cause) {
-      report(
-        options.onError,
-        new MCPEventWebhookError(
-          'signature',
-          'Webhook signature verification failed',
-          {
-            subscriptionKey: key,
-            cause,
-          },
-        ),
+      // A bad stored secret is our fault, not the sender's: ask for a retry.
+      if (cause instanceof MCPEventConfigError) {
+        return fail(503, 'store', 'Stored webhook secret is invalid', cause)
+      }
+      return fail(
+        401,
+        'signature',
+        'Webhook signature verification failed',
+        cause,
       )
-      return empty(401)
     }
     if (!verified) {
-      report(
-        options.onError,
-        new MCPEventWebhookError(
-          'signature',
-          'Webhook signature verification failed',
-          {
-            subscriptionKey: key,
-          },
-        ),
-      )
-      return empty(401)
+      return fail(401, 'signature', 'Webhook signature verification failed')
     }
 
     let json: unknown
     try {
       json = JSON.parse(new TextDecoder().decode(body))
     } catch (cause) {
-      report(
-        options.onError,
-        new MCPEventWebhookError('body', 'Webhook body is not JSON', {
-          subscriptionKey: key,
-          cause,
-        }),
-      )
-      return empty(400)
+      return fail(400, 'body', 'Webhook body is not JSON', cause)
     }
 
     const classified = classifyWebhookBody(json)
-    const info = toInfo(record)
-    const nowMs = now()
-
     if (classified.kind === 'verification') {
       return Response.json({ challenge: classified.challenge })
     }
     if (classified.kind === 'invalid') {
-      report(
-        options.onError,
-        new MCPEventWebhookError('envelope', classified.issue, {
-          subscriptionKey: key,
-        }),
-      )
-      return empty(400)
+      return fail(400, 'envelope', classified.issue)
     }
+    const info = toInfo(record)
     if (classified.kind === 'terminated') {
       try {
         await options.onTerminated?.({
@@ -326,35 +251,22 @@ export function createMCPEventWebhook(
           termination: classified.error,
         })
       } catch (cause) {
-        report(
-          options.onError,
-          new MCPEventWebhookError('handler', 'onTerminated failed', {
-            subscriptionKey: key,
-            cause,
-          }),
-        )
-        return empty(503)
+        return fail(503, 'handler', 'onTerminated failed', cause)
       }
       try {
         await options.store.delete(key)
       } catch (cause) {
-        report(
-          options.onError,
-          new MCPEventWebhookError(
-            'store',
-            'Failed to delete terminated subscription',
-            {
-              subscriptionKey: key,
-              cause,
-            },
-          ),
+        return fail(
+          503,
+          'store',
+          'Failed to delete terminated subscription',
+          cause,
         )
-        return empty(503)
       }
       return empty(204)
     }
     if (isPending(record)) {
-      return empty(503)
+      return fail(503, 'routing', 'Subscription is still pending')
     }
     if (classified.kind === 'gap') {
       try {
@@ -364,14 +276,7 @@ export function createMCPEventWebhook(
           gap: { cursor: classified.cursor, truncated: true },
         })
       } catch (cause) {
-        report(
-          options.onError,
-          new MCPEventWebhookError('handler', 'onGap failed', {
-            subscriptionKey: key,
-            cause,
-          }),
-        )
-        return empty(503)
+        return fail(503, 'handler', 'onGap failed', cause)
       }
       try {
         await options.store.update(key, {
@@ -379,53 +284,27 @@ export function createMCPEventWebhook(
           truncated: true,
         })
       } catch (cause) {
-        report(
-          options.onError,
-          new MCPEventWebhookError('store', 'Failed to persist gap cursor', {
-            subscriptionKey: key,
-            cause,
-          }),
-        )
-        return empty(503)
+        return fail(503, 'store', 'Failed to persist gap cursor', cause)
       }
       return empty(204)
     }
 
-    if (isExpired(record, nowMs)) {
-      return empty(410)
+    if (isExpired(record, now())) {
+      return fail(410, 'routing', 'Subscription lease expired')
     }
     if (
       classified.event.name !== record.name ||
       classified.event.eventId !== webhookId
     ) {
-      report(
-        options.onError,
-        new MCPEventWebhookError(
-          'envelope',
-          'Event does not match the subscription',
-          {
-            subscriptionKey: key,
-          },
-        ),
-      )
-      return empty(400)
+      return fail(400, 'envelope', 'Event does not match the subscription')
     }
-    if (options.validatePayload !== undefined) {
-      try {
-        await options.validatePayload({
-          definition: record.definition,
-          data: classified.event.data,
-        })
-      } catch (cause) {
-        report(
-          options.onError,
-          new MCPEventWebhookError('payload', 'Event payload was rejected', {
-            subscriptionKey: key,
-            cause,
-          }),
-        )
-        return empty(400)
-      }
+    try {
+      await options.validatePayload?.({
+        definition: record.definition,
+        data: classified.event.data,
+      })
+    } catch (cause) {
+      return fail(400, 'payload', 'Event payload was rejected', cause)
     }
     try {
       await options.onEvent({
@@ -434,27 +313,13 @@ export function createMCPEventWebhook(
         messageId: webhookId,
       })
     } catch (cause) {
-      report(
-        options.onError,
-        new MCPEventWebhookError('handler', 'onEvent failed', {
-          subscriptionKey: key,
-          cause,
-        }),
-      )
-      return empty(503)
+      return fail(503, 'handler', 'onEvent failed', cause)
     }
     if (classified.event.cursor !== undefined) {
       try {
         await options.store.update(key, { cursor: classified.event.cursor })
       } catch (cause) {
-        report(
-          options.onError,
-          new MCPEventWebhookError('store', 'Failed to persist event cursor', {
-            subscriptionKey: key,
-            cause,
-          }),
-        )
-        return empty(503)
+        return fail(503, 'store', 'Failed to persist event cursor', cause)
       }
     }
     return empty(204)

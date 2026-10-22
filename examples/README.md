@@ -160,7 +160,7 @@ A slim TanStack Start app. Subscribe to `incident.created`, then receive a signe
 pnpm --filter mcp-events dev
 ```
 
-Open http://127.0.0.1:3100. Click Subscribe, then Emit incident.
+Open http://127.0.0.1:3101. Click Subscribe, then Emit incident.
 
 📖 [Full Documentation](react/mcp-events/README.md)
 

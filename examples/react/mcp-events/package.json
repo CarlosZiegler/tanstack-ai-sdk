@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite dev --port 3100",
+    "dev": "vite dev --port 3101",
     "build": "vite build",
     "test": "exit 0",
     "test:types": "tsc"

@@ -16,8 +16,8 @@ import type {
   MCPEventDefinition,
   MCPEventStore,
   MCPEventsContext,
-  MCPStandardSchema,
 } from '../../src/events/types'
+import type { StandardSchemaV1 } from '@modelcontextprotocol/client'
 
 const webhookDef: MCPEventDefinition = {
   name: 'incident.created',
@@ -58,28 +58,41 @@ function recordingStore(inner: MCPEventStore = inMemoryMCPEventStore()) {
   return { store, calls, inner }
 }
 
+/** Raw server reply. The fake validates it with the schema, as the SDK does. */
+type Respond = (
+  method: Parameters<MCPEventsContext['request']>[0],
+  params: Record<string, unknown>,
+) => Promise<unknown>
+
 function fakeCtx(
-  overrides: Partial<MCPEventsContext> = {},
-): MCPEventsContext & { requests: Array<{ method: string; params: unknown }> } {
+  overrides: Partial<Omit<MCPEventsContext, 'request'>> & {
+    request?: Respond
+  } = {},
+) {
   const requests: Array<{ method: string; params: unknown }> = []
-  const inner = overrides.request
-  const ctx: MCPEventsContext = {
+  const { request: initial, ...rest } = overrides
+  const fake = {
+    respond: initial,
+    requests,
     assertOpen() {},
     supportsEvents: true,
-    transport: { type: 'custom' },
-    ...overrides,
-    async request(
-      method,
-      params,
-      schema: MCPStandardSchema<unknown>,
-      signal?: AbortSignal,
-    ) {
+    transport: { type: 'custom' as const },
+    ...rest,
+    async request<T>(
+      method: Parameters<MCPEventsContext['request']>[0],
+      params: Record<string, unknown>,
+      schema: StandardSchemaV1<unknown, T>,
+    ): Promise<T> {
       requests.push({ method, params })
-      if (inner) return inner(method, params, schema, signal)
-      throw new Error(`unexpected ${method}`)
+      if (fake.respond === undefined) throw new Error(`unexpected ${method}`)
+      const parsed = await schema['~standard'].validate(
+        await fake.respond(method, params),
+      )
+      if (parsed.issues) throw new Error(parsed.issues[0]?.message)
+      return parsed.value
     },
   }
-  return Object.assign(ctx, { requests })
+  return fake
 }
 
 const delivery = {
@@ -217,7 +230,7 @@ describe('createDirectMCPEvents', () => {
     expect(stored?.id).toBe('sub_1')
   })
 
-  it('keeps the pending record and throws MCPEventRequestError when the request fails', async () => {
+  it('deletes the pending record and throws MCPEventRequestError when the request fails', async () => {
     const store = inMemoryMCPEventStore()
     const ctx = fakeCtx({
       async request(method) {
@@ -231,39 +244,9 @@ describe('createDirectMCPEvents', () => {
     await expect(
       api.subscribe({ name: 'incident.created', delivery }),
     ).rejects.toBeInstanceOf(MCPEventRequestError)
-    const listed: Array<{ status: string }> = []
+    const listed: Array<unknown> = []
     for await (const item of store.list!()) listed.push(item)
-    expect(listed).toHaveLength(1)
-    expect(listed[0]?.status).toBe('pending')
-  })
-
-  it('refresh({key}) recovers a pending record left by a timed-out subscribe', async () => {
-    const store = inMemoryMCPEventStore()
-    const ctx = fakeCtx({
-      async request(method) {
-        if (method === 'events/list') return { events: [webhookDef] }
-        throw new ProtocolError(-32027, 'timeout', { reason: 'timeout' })
-      },
-    })
-    const api = createDirectMCPEvents(ctx, { store })
-    await expect(
-      api.subscribe({ name: 'incident.created', delivery }),
-    ).rejects.toBeInstanceOf(MCPEventRequestError)
-    let key = ''
-    for await (const item of store.list!()) key = item.key
-    ctx.request = async (method, params) => {
-      expect(method).toBe('events/subscribe')
-      expect((params.delivery as { url: string }).url).toContain(key)
-      return {
-        id: 'sub_recovered',
-        refreshBefore: null,
-        cursor: null,
-        truncated: false,
-      }
-    }
-    const recovered = await api.refresh({ key })
-    expect(recovered.id).toBe('sub_recovered')
-    expect((await store.get(key))?.status).toBe('active')
+    expect(listed).toHaveLength(0)
   })
 
   it('throws MCPUnknownEventError not-found / webhook-unsupported', async () => {
@@ -423,7 +406,7 @@ describe('createDirectMCPEvents', () => {
       maxAgeMs: 10,
     })
     let seenStatus = ''
-    ctx.request = async (method, params) => {
+    ctx.respond = async (method, params) => {
       expect(method).toBe('events/subscribe')
       expect(params).toMatchObject({
         name: 'incident.created',

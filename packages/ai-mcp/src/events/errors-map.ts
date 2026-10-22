@@ -12,31 +12,6 @@ const KIND_BY_CODE: Record<number, MCPEventRequestKind> = {
   [-32027]: 'callback-endpoint',
 }
 
-const OPENAI_CALLBACK_REASONS = new Set([
-  'connection_refused',
-  'timeout',
-  'tls_error',
-  'http_4xx',
-  'http_5xx',
-  'challenge_failed',
-])
-
-function eventRequestKind(err: {
-  code: number
-  data?: unknown
-}): MCPEventRequestKind {
-  if (err.code === -32027) return 'callback-endpoint'
-  if (
-    err.code === -32015 &&
-    isRecord(err.data) &&
-    typeof err.data.reason === 'string' &&
-    OPENAI_CALLBACK_REASONS.has(err.data.reason)
-  ) {
-    return 'callback-endpoint'
-  }
-  return KIND_BY_CODE[err.code] ?? 'unknown'
-}
-
 function redactData(data: unknown): unknown {
   if (!isRecord(data)) return data
   const { secret: _secret, ...rest } = data
@@ -53,7 +28,7 @@ function looksLikeSecret(text: string): boolean {
  */
 export function toMCPEventRequestError(err: unknown): unknown {
   if (!(err instanceof ProtocolError)) return err
-  const kind = eventRequestKind(err)
+  const kind = KIND_BY_CODE[err.code] ?? 'unknown'
   const data = redactData(err.data)
   const reason =
     isRecord(err.data) && typeof err.data.reason === 'string'

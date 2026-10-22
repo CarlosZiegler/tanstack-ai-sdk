@@ -6,6 +6,7 @@ import type {
   OAuthClientProvider,
   Transport,
 } from '@modelcontextprotocol/client'
+import { isRecord } from './events/value'
 
 export interface HttpTransportConfig {
   type: 'http'
@@ -45,16 +46,6 @@ export type TransportInput = TransportConfig | Transport
  */
 export function isTransportInstance(input: TransportInput): input is Transport {
   return 'start' in input && typeof input.start === 'function'
-}
-
-/**
- * Build a Transport from HTTP config, SSE config, or an existing Transport.
- *
- * For stdio, build the Transport with `stdioTransport` and pass that instance.
- * Throws an Error when the config type is `stdio` or is not a known type.
- */
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 /**
@@ -136,20 +127,32 @@ function fetchWithMcpEventName(baseFetch: typeof fetch = fetch): typeof fetch {
   }
 }
 
-export async function resolveTransport(input: TransportInput) {
+/**
+ * Build a Transport from HTTP config, SSE config, or an existing Transport.
+ *
+ * For stdio, build the Transport with `stdioTransport` and pass that instance.
+ * Throws an Error when the config type is `stdio` or is not a known type.
+ * With `events`, HTTP and SSE requests for `events/*` get the `Mcp-Name` header.
+ */
+export async function resolveTransport(
+  input: TransportInput,
+  options?: { events?: boolean },
+) {
   if (isTransportInstance(input)) return input
+  const withEvents = (base?: typeof fetch) =>
+    options?.events ? fetchWithMcpEventName(base) : base
 
   switch (input.type) {
     case 'http':
       return new StreamableHTTPClientTransport(new URL(input.url), {
         requestInit: { headers: input.headers },
-        fetch: fetchWithMcpEventName(input.fetch),
+        fetch: withEvents(input.fetch),
         authProvider: input.authProvider,
       })
     case 'sse':
       return new SSEClientTransport(new URL(input.url), {
         requestInit: { headers: input.headers },
-        fetch: fetchWithMcpEventName(input.fetch),
+        fetch: withEvents(input.fetch),
         authProvider: input.authProvider,
       })
     case 'stdio':

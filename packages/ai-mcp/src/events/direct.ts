@@ -21,7 +21,8 @@ import type {
   SubscribeMCPEventOptions,
 } from './types'
 import { isSafeInteger } from './value'
-import { decodeEventResult, emptyResult, subscribeResult } from './wire'
+import { emptyResult, subscribeResult } from './wire'
+import type { SubscribeEventsResult } from './wire'
 
 function rethrowEvents(err: unknown): never {
   if (isMethodNotFound(err)) throw new MCPEventsUnsupportedError()
@@ -84,28 +85,6 @@ function subscribeParams(record: MCPEventSubscription) {
   return params
 }
 
-function toResult(
-  key: string,
-  result: {
-    id: string
-    refreshBefore: string | null
-    cursor: string | null
-    truncated: boolean
-    deliveryStatus?: MCPEventSubscribeResult['deliveryStatus']
-  },
-): MCPEventSubscribeResult {
-  return {
-    key,
-    id: result.id,
-    refreshBefore: result.refreshBefore,
-    cursor: result.cursor,
-    truncated: result.truncated,
-    ...(result.deliveryStatus === undefined
-      ? {}
-      : { deliveryStatus: result.deliveryStatus }),
-  }
-}
-
 /**
  * Direct-mode events API: MCP requests plus a local subscription store.
  *
@@ -117,14 +96,45 @@ export function createDirectMCPEvents(
 ): MCPEvents {
   const store = options.store
 
+  function assertReady() {
+    ctx.assertOpen()
+    if (!ctx.supportsEvents) throw new MCPEventsUnsupportedError()
+  }
+
+  async function send(record: MCPEventSubscription, signal?: AbortSignal) {
+    try {
+      return await ctx.request(
+        'events/subscribe',
+        subscribeParams(record),
+        subscribeResult,
+        signal,
+      )
+    } catch (err) {
+      rethrowEvents(err)
+    }
+  }
+
+  async function save(
+    key: string,
+    result: SubscribeEventsResult,
+  ): Promise<MCPEventSubscribeResult> {
+    await store.update(key, {
+      id: result.id,
+      refreshBefore: result.refreshBefore,
+      cursor: result.cursor,
+      truncated: result.truncated,
+      status: 'active',
+    })
+    return { key, ...result }
+  }
+
   return {
     list(listOptions) {
       return listEventDefinitions(ctx, listOptions?.signal)
     },
 
     async subscribe(input: SubscribeMCPEventOptions) {
-      ctx.assertOpen()
-      if (!ctx.supportsEvents) throw new MCPEventsUnsupportedError()
+      assertReady()
       assertWebhookMode(input.delivery.mode)
       assertTtlMs(input.ttlMs)
       assertMaxAgeMs(input.maxAgeMs)
@@ -161,88 +171,42 @@ export function createDirectMCPEvents(
         ...(input.maxAgeMs === undefined ? {} : { maxAgeMs: input.maxAgeMs }),
       }
       await store.set(record)
-
-      let result
-      try {
-        result = decodeEventResult(
-          subscribeResult,
-          await ctx.request(
-            'events/subscribe',
-            subscribeParams(record),
-            subscribeResult,
-            input.signal,
-          ),
-        )
-      } catch (err) {
-        rethrowEvents(err)
-      }
-
-      await store.update(key, {
-        id: result.id,
-        refreshBefore: result.refreshBefore,
-        cursor: result.cursor,
-        truncated: result.truncated,
-        status: 'active',
+      const result = await send(record, input.signal).catch(async (err) => {
+        // The server did not accept it, so nothing will deliver to this key.
+        await store.delete(key)
+        throw err
       })
-      return toResult(key, result)
+      return await save(key, result)
     },
 
     async refresh(ref) {
-      ctx.assertOpen()
-      if (!ctx.supportsEvents) throw new MCPEventsUnsupportedError()
+      assertReady()
       const record = await resolveRecord(store, ref)
-      let result
-      try {
-        result = decodeEventResult(
-          subscribeResult,
-          await ctx.request(
-            'events/subscribe',
-            subscribeParams(record),
-            subscribeResult,
-            ref.signal,
-          ),
-        )
-      } catch (err) {
-        rethrowEvents(err)
-      }
-      await store.update(record.key, {
-        id: result.id,
-        refreshBefore: result.refreshBefore,
-        cursor: result.cursor,
-        truncated: result.truncated,
-        status: 'active',
-      })
-      return toResult(record.key, result)
+      return await save(record.key, await send(record, ref.signal))
     },
 
     async unsubscribe(ref) {
-      ctx.assertOpen()
-      if (!ctx.supportsEvents) throw new MCPEventsUnsupportedError()
+      assertReady()
       const record = await resolveRecord(store, ref)
       try {
-        decodeEventResult(
+        await ctx.request(
+          'events/unsubscribe',
+          {
+            name: record.name,
+            arguments: record.arguments,
+            delivery: { mode: 'webhook', url: record.delivery.url },
+          },
           emptyResult,
-          await ctx.request(
-            'events/unsubscribe',
-            {
-              name: record.name,
-              arguments: record.arguments,
-              delivery: { mode: 'webhook', url: record.delivery.url },
-            },
-            emptyResult,
-            ref.signal,
-          ),
+          ref.signal,
         )
       } catch (err) {
         const mapped = toMCPEventRequestError(err)
         if (
-          mapped instanceof MCPEventRequestError &&
-          mapped.kind === 'not-found'
+          !(mapped instanceof MCPEventRequestError) ||
+          mapped.kind !== 'not-found'
         ) {
-          await store.delete(record.key)
-          return
+          throw mapped
         }
-        throw mapped
       }
       await store.delete(record.key)
     },

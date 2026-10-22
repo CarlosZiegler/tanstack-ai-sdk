@@ -266,43 +266,10 @@ async function listenHttp(
 }
 
 describe('createMCPClient HTTP capability detection', () => {
-  it('lists and subscribes when the server advertises only events: {}', async () => {
-    const store = inMemoryMCPEventStore()
-    const webhook = createMCPEventWebhook({ store, onEvent: () => undefined })
-    const events = createTestEventsServer({
-      events: [definition],
-      deliver: (request) => webhook(request),
-      allowHttpLoopback: true,
-      verify: 'challenge',
-      advertise: { extensions: false, events: true },
-    })
-    const http = await listenHttp(eventsHttpFetch(events))
-    const client = await createMCPClient({
-      transport: { type: 'http', url: http.url },
-      experimental_events: { store },
-    })
-    try {
-      const listed = await client.experimental_events.list()
-      expect(listed.map((item) => item.name)).toEqual(['incident.created'])
-      const sub = await client.experimental_events.subscribe({
-        name: 'incident.created',
-        delivery: {
-          mode: 'webhook',
-          url: 'http://127.0.0.1/hook',
-          allowInsecureLocalhost: true,
-        },
-      })
-      expect(sub.id).toBeTypeOf('string')
-    } finally {
-      await client.close()
-      await http.close()
-    }
-  })
-
-  it('throws MCPEventsUnsupportedError when the server advertises neither key', async () => {
+  it('throws MCPEventsUnsupportedError when the server does not declare the extension', async () => {
     const events = createTestEventsServer({
       verify: 'skip',
-      advertise: { extensions: false, events: false },
+      advertise: false,
     })
     const http = await listenHttp(eventsHttpFetch(events))
     const client = await createMCPClient({
@@ -318,10 +285,9 @@ describe('createMCPClient HTTP capability detection', () => {
     }
   })
 
-  it('still lists when the server advertises extensions only', async () => {
+  it('lists when the server declares the SEP extension', async () => {
     const events = createTestEventsServer({
       verify: 'skip',
-      advertise: { extensions: true, events: false },
     })
     const http = await listenHttp(eventsHttpFetch(events))
     const client = await createMCPClient({

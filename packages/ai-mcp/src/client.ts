@@ -749,7 +749,9 @@ export async function createMCPClient(
 async function connectTransport<
   TServer extends ServerDescriptor = AutomaticDescriptor,
 >(options: MCPClientOptions) {
-  const transport = await resolveTransport(options.transport)
+  const transport = await resolveTransport(options.transport, {
+    events: options.experimental_events !== undefined,
+  })
   const impl = new MCPClientImpl<TServer>(
     options.prefix,
     options.name,

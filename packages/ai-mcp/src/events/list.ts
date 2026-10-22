@@ -2,7 +2,7 @@ import { listPages } from '../list-pages'
 import { MCPEventsUnsupportedError } from '../errors'
 import { isMethodNotFound, toMCPEventRequestError } from './errors-map'
 import type { MCPEventDefinition, MCPEventsContext } from './types'
-import { decodeEventResult, listEventsResult } from './wire'
+import { listEventsResult } from './wire'
 
 /**
  * Walk every `events/list` page. Maps method-not-found to unsupported.
@@ -15,14 +15,11 @@ export async function listEventDefinitions(
   if (!ctx.supportsEvents) throw new MCPEventsUnsupportedError()
   try {
     return await listPages(async (cursor) => {
-      const page = decodeEventResult(
+      const page = await ctx.request(
+        'events/list',
+        cursor === undefined ? {} : { cursor },
         listEventsResult,
-        await ctx.request(
-          'events/list',
-          cursor === undefined ? {} : { cursor },
-          listEventsResult,
-          signal,
-        ),
+        signal,
       )
       return { items: page.events, nextCursor: page.nextCursor }
     })

@@ -1,10 +1,9 @@
+import type { StandardSchemaV1Sync } from '@modelcontextprotocol/client'
 import type {
-  JSONObject,
   MCPEventDefinition,
   MCPEventDeliveryMode,
   MCPEventDeliveryStatus,
   MCPEventOccurrence,
-  MCPStandardSchema,
 } from './types'
 import { isJsonObject, isNonEmptyString, isRecord, issues } from './value'
 
@@ -49,32 +48,62 @@ export interface ListEventsResult {
   nextCursor?: string
 }
 
-export const listEventsResult: MCPStandardSchema<ListEventsResult> = {
-  '~standard': {
-    version: 1,
-    vendor: 'tanstack-ai-mcp',
-    validate(value: unknown) {
-      if (!isRecord(value) || !Array.isArray(value.events)) {
-        return issues('events/list result must include an events array')
-      }
-      const events: Array<MCPEventDefinition> = []
-      for (const item of value.events) {
-        const event = parseEventDefinition(item)
-        if (event === undefined) {
-          return issues('events/list contains an invalid event descriptor')
+export const listEventsResult: StandardSchemaV1Sync<unknown, ListEventsResult> =
+  {
+    '~standard': {
+      version: 1,
+      vendor: 'tanstack-ai-mcp',
+      validate(value: unknown) {
+        if (!isRecord(value) || !Array.isArray(value.events)) {
+          return issues('events/list result must include an events array')
         }
-        events.push(event)
-      }
-      const nextCursor =
-        typeof value.nextCursor === 'string' ? value.nextCursor : undefined
-      return {
-        value: {
-          events,
-          ...(nextCursor === undefined ? {} : { nextCursor }),
-        },
-      }
+        const events: Array<MCPEventDefinition> = []
+        for (const item of value.events) {
+          const event = parseEventDefinition(item)
+          if (event === undefined) {
+            return issues('events/list contains an invalid event descriptor')
+          }
+          events.push(event)
+        }
+        const nextCursor = value.nextCursor
+        if (nextCursor !== undefined && typeof nextCursor !== 'string') {
+          return issues('nextCursor must be a string')
+        }
+        return {
+          value: {
+            events,
+            ...(nextCursor === undefined ? {} : { nextCursor }),
+          },
+        }
+      },
     },
-  },
+  }
+
+const DELIVERY_STATUS_TYPES: Record<keyof MCPEventDeliveryStatus, string> = {
+  active: 'boolean',
+  lastDeliveryAt: 'string',
+  lastError: 'string',
+  failedSince: 'string',
+  throttled: 'boolean',
+  retryAfterMs: 'number',
+}
+
+function isDeliveryStatus(value: unknown): value is MCPEventDeliveryStatus {
+  if (!isRecord(value)) return false
+  return Object.entries(DELIVERY_STATUS_TYPES).every(([field, type]) => {
+    const fieldValue = value[field]
+    if (fieldValue === undefined) return true
+    if (field === 'lastError' && fieldValue === null) return true
+    return typeof fieldValue === type
+  })
+}
+
+/** `undefined` when absent, `null` when present but malformed. */
+function parseDeliveryStatus(
+  value: unknown,
+): MCPEventDeliveryStatus | undefined | null {
+  if (value === undefined) return undefined
+  return isDeliveryStatus(value) ? value : null
 }
 
 export interface SubscribeEventsResult {
@@ -85,7 +114,10 @@ export interface SubscribeEventsResult {
   deliveryStatus?: MCPEventDeliveryStatus
 }
 
-export const subscribeResult: MCPStandardSchema<SubscribeEventsResult> = {
+export const subscribeResult: StandardSchemaV1Sync<
+  unknown,
+  SubscribeEventsResult
+> = {
   '~standard': {
     version: 1,
     vendor: 'tanstack-ai-mcp',
@@ -116,9 +148,10 @@ export const subscribeResult: MCPStandardSchema<SubscribeEventsResult> = {
       } else {
         return issues('cursor must be a string or null')
       }
-      const deliveryStatus = isRecord(value.deliveryStatus)
-        ? (value.deliveryStatus as MCPEventDeliveryStatus)
-        : undefined
+      const deliveryStatus = parseDeliveryStatus(value.deliveryStatus)
+      if (deliveryStatus === null) {
+        return issues('deliveryStatus has a field of the wrong type')
+      }
       return {
         value: {
           id: value.id,
@@ -140,8 +173,8 @@ function parseEventOccurrence(value: unknown): MCPEventOccurrence | undefined {
   if (typeof value.timestamp !== 'string' || !isIsoDateTime(value.timestamp)) {
     return undefined
   }
-  if (!isRecord(value.data)) return undefined
-  const data = value.data as JSONObject
+  const data = value.data
+  if (!isJsonObject(data)) return undefined
   const event: MCPEventOccurrence = {
     eventId: value.eventId,
     name: value.name,
@@ -220,7 +253,10 @@ export function classifyWebhookBody(json: unknown): ClassifiedWebhookBody {
   return { kind: 'event', event }
 }
 
-export const emptyResult: MCPStandardSchema<Record<string, never>> = {
+export const emptyResult: StandardSchemaV1Sync<
+  unknown,
+  Record<string, never>
+> = {
   '~standard': {
     version: 1,
     vendor: 'tanstack-ai-mcp',
@@ -228,15 +264,4 @@ export const emptyResult: MCPStandardSchema<Record<string, never>> = {
       return { value: {} }
     },
   },
-}
-
-export function decodeEventResult<T>(
-  schema: MCPStandardSchema<T>,
-  value: unknown,
-): T {
-  const parsed = schema['~standard'].validate(value)
-  if ('issues' in parsed) {
-    throw new Error(parsed.issues[0]?.message ?? 'invalid events result')
-  }
-  return parsed.value
 }
