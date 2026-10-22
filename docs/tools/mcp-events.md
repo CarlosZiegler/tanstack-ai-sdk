@@ -283,9 +283,10 @@ import {
 const store = inMemoryMCPEventStore()
 const webhook = createMCPEventWebhook({
   store,
-  onEvent: async ({ event }) => {
+  onEvent: async ({ subscription, event }) => {
     const stream = chat({
-      adapter: openaiText('gpt-5.6'),
+      adapter: openaiText('gpt-6.1-sol'),
+      threadId: `mcp-events-${subscription.key}`,
       messages: [
         {
           role: 'user',
